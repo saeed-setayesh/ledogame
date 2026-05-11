@@ -34,6 +34,7 @@ interface User {
   walletBalance: any;
   createdAt: Date;
   avatar?: string | null;
+  countryCode?: string | null;
 }
 
 interface ProfileProps {
@@ -60,9 +61,8 @@ export default function ProfileComponent({ user }: ProfileProps) {
   const currentStreak = 3;
 
   return (
-    <div className="game-bg relative overflow-hidden">
-      {/* Background accent */}
-      <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[500px] h-[300px] rounded-full bg-[radial-gradient(ellipse,rgba(180,40,40,0.12),transparent_70%)]" />
+    <div className="game-shell-bg relative overflow-hidden min-h-dvh">
+      <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[500px] h-[300px] rounded-full bg-[radial-gradient(ellipse,rgba(60,90,80,0.15),transparent_70%)]" />
 
       <div className="relative container mx-auto px-4 py-6 max-w-2xl space-y-5">
 
@@ -210,7 +210,7 @@ export default function ProfileComponent({ user }: ProfileProps) {
         {activeTab === "customize" && (
           <div className="space-y-4">
             <AvatarSelector
-              currentAvatar={user.avatar}
+              currentAvatar={user.avatar ?? null}
               onAvatarChange={() => {
                 window.location.reload();
               }}

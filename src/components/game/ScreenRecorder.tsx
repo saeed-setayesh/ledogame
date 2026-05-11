@@ -1,19 +1,22 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 interface ScreenRecorderProps {
   gameId: string;
+  iconSrc?: string;
 }
 
-export default function ScreenRecorder({ gameId }: ScreenRecorderProps) {
+export default function ScreenRecorder({
+  gameId,
+  iconSrc = "/game/icons/record.png",
+}: ScreenRecorderProps) {
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(
     null
   );
   const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const startRecording = async () => {
     try {
@@ -97,33 +100,21 @@ export default function ScreenRecorder({ gameId }: ScreenRecorderProps) {
 
   return (
     <button
+      type="button"
       onClick={recording ? stopRecording : startRecording}
       className={cn(
-        "w-12 h-12 md:w-14 md:h-14 rounded-xl flex items-center justify-center",
-        "transition-all duration-300 shadow-lg hover:scale-110 active:scale-95",
-        "backdrop-blur-sm border-2",
-        recording
-          ? "bg-gradient-to-br from-red-600 to-red-700 border-red-500 text-white animate-pulse"
-          : "bg-gradient-to-br from-red-500 to-red-600 border-red-400 text-white"
+        "min-h-12 min-w-12 h-12 w-12 md:h-14 md:w-14 rounded-xl flex items-center justify-center",
+        "transition-all duration-300 shadow-lg hover:scale-105 active:scale-95",
+        "border-2 border-white/15 bg-black/35 backdrop-blur-sm",
+        recording && "ring-2 ring-red-500/70 animate-pulse"
       )}
-      title={recording ? "Stop Recording" : "Record Game"}
+      title={recording ? "Stop recording" : "Record screen"}
     >
       {recording ? (
-        <svg
-          className="w-6 h-6 md:w-7 md:h-7"
-          fill="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <rect x="6" y="6" width="12" height="12" rx="2" />
-        </svg>
+        <span className="w-4 h-4 bg-red-500 rounded-sm" />
       ) : (
-        <svg
-          className="w-6 h-6 md:w-7 md:h-7"
-          fill="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <circle cx="12" cy="12" r="6" />
-        </svg>
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={iconSrc} alt="" className="w-7 h-7 md:w-8 md:h-8 object-contain" />
       )}
     </button>
   );

@@ -1,15 +1,33 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
+
+export type LocalVideoState = {
+  enabled: boolean;
+  stream: MediaStream | null;
+};
 
 interface VideoCallProps {
   gameId: string;
   userId: string;
   players: { id: string; userId: string; username?: string }[];
+  /** If true, only render control buttons (for bottom bar). */
+  compact?: boolean;
+  onLocalVideoChange?: (state: LocalVideoState) => void;
+  cameraIconSrc?: string;
+  micIconSrc?: string;
 }
 
-export default function VideoCall({ gameId, userId, players }: VideoCallProps) {
+export default function VideoCall({
+  gameId,
+  userId,
+  players,
+  compact,
+  onLocalVideoChange,
+  cameraIconSrc = "/game/icons/camera.png",
+  micIconSrc = "/game/icons/mic.png",
+}: VideoCallProps) {
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -19,9 +37,26 @@ export default function VideoCall({ gameId, userId, players }: VideoCallProps) {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
 
+  const notifyVideo = useCallback(
+    (enabled: boolean, stream: MediaStream | null) => {
+      onLocalVideoChange?.({ enabled, stream });
+    },
+    [onLocalVideoChange]
+  );
+
+  useEffect(() => {
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
+    }
+  }, [localStream]);
+
+  useEffect(() => {
+    notifyVideo(isVideoEnabled, isVideoEnabled ? localStream : null);
+  }, [isVideoEnabled, localStream, notifyVideo]);
+
   useEffect(() => {
     if (isVideoEnabled || isAudioEnabled) {
-      initializeMedia();
+      void initializeMedia();
     } else {
       stopMedia();
     }
@@ -43,7 +78,6 @@ export default function VideoCall({ gameId, userId, players }: VideoCallProps) {
         localVideoRef.current.srcObject = stream;
       }
 
-      // Create peer connections for other players
       players.forEach((player) => {
         if (player.userId !== userId) {
           createPeerConnection(player.userId);
@@ -75,14 +109,12 @@ export default function VideoCall({ gameId, userId, players }: VideoCallProps) {
       ],
     });
 
-    // Add local stream tracks
     if (localStream) {
       localStream.getTracks().forEach((track) => {
         pc.addTrack(track, localStream);
       });
     }
 
-    // Handle remote stream
     pc.ontrack = (event) => {
       setRemoteStreams((prev) => {
         const newMap = new Map(prev);
@@ -91,11 +123,9 @@ export default function VideoCall({ gameId, userId, players }: VideoCallProps) {
       });
     };
 
-    // Handle ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        // Send ICE candidate via Socket.io
-        // This would be implemented with your socket client
+        // ICE via Socket.io — placeholder
       }
     };
 
@@ -110,143 +140,98 @@ export default function VideoCall({ gameId, userId, players }: VideoCallProps) {
     setIsAudioEnabled(!isAudioEnabled);
   };
 
+  const btnClass = (on: boolean) =>
+    cn(
+      "min-h-12 min-w-12 h-12 w-12 md:h-14 md:w-14 rounded-xl flex items-center justify-center",
+      "transition-all duration-300 shadow-lg hover:scale-105 active:scale-95",
+      "border-2 border-white/15 bg-black/35 backdrop-blur-sm",
+      on ? "ring-2 ring-emerald-500/60" : "opacity-80"
+    );
+
   return (
-    <div className="flex items-center gap-2">
-      {/* Video Toggle - Icon Only */}
+    <div className={cn("flex items-center gap-2", compact && "relative")}>
       <button
+        type="button"
         onClick={toggleVideo}
-        className={cn(
-          "w-12 h-12 md:w-14 md:h-14 rounded-xl flex items-center justify-center",
-          "transition-all duration-300 shadow-lg hover:scale-110 active:scale-95",
-          "backdrop-blur-sm border-2",
-          isVideoEnabled
-            ? "bg-gradient-to-br from-blue-500 to-blue-600 border-blue-400 text-white"
-            : "bg-white/90 dark:bg-gray-800/90 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400"
-        )}
-        title={isVideoEnabled ? "Video On" : "Video Off"}
+        className={btnClass(isVideoEnabled)}
+        title={isVideoEnabled ? "Video on" : "Video off"}
       >
-        {isVideoEnabled ? (
-          <svg
-            className="w-6 h-6 md:w-7 md:h-7"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-            />
-          </svg>
-        ) : (
-          <svg
-            className="w-6 h-6 md:w-7 md:h-7"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-            />
-          </svg>
-        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={cameraIconSrc}
+          alt=""
+          className="w-7 h-7 md:w-8 md:h-8 object-contain"
+        />
       </button>
 
-      {/* Audio Toggle - Icon Only */}
       <button
+        type="button"
         onClick={toggleAudio}
-        className={cn(
-          "w-12 h-12 md:w-14 md:h-14 rounded-xl flex items-center justify-center",
-          "transition-all duration-300 shadow-lg hover:scale-110 active:scale-95",
-          "backdrop-blur-sm border-2",
-          isAudioEnabled
-            ? "bg-gradient-to-br from-green-500 to-green-600 border-green-400 text-white"
-            : "bg-white/90 dark:bg-gray-800/90 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400"
-        )}
-        title={isAudioEnabled ? "Audio On" : "Audio Off"}
+        className={btnClass(isAudioEnabled)}
+        title={isAudioEnabled ? "Mic on" : "Mic off"}
       >
-        {isAudioEnabled ? (
-          <svg
-            className="w-6 h-6 md:w-7 md:h-7"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-            />
-          </svg>
-        ) : (
-          <svg
-            className="w-6 h-6 md:w-7 md:h-7"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"
-            />
-          </svg>
-        )}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={micIconSrc} alt="" className="w-7 h-7 md:w-8 md:h-8 object-contain" />
       </button>
 
-      {/* Video Preview (if enabled) */}
-      {isVideoEnabled && (localStream || remoteStreams.size > 0) && (
-        <div className="absolute top-20 right-4 bg-black/80 backdrop-blur-sm rounded-lg p-2 shadow-2xl z-50">
-          <div className="grid grid-cols-2 gap-2">
-            {isVideoEnabled && localStream && (
-              <div className="relative">
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  muted
-                  className="w-24 h-16 object-cover rounded"
-                />
-                <div className="absolute bottom-1 left-1 text-xs bg-black/70 text-white px-1 rounded">
-                  You
-                </div>
-              </div>
-            )}
-            {Array.from(remoteStreams.entries()).map(([peerUserId, stream]) => {
-              const player = players.find((p) => p.userId === peerUserId);
-              return (
-                <div key={peerUserId} className="relative">
+      {!compact &&
+        isVideoEnabled &&
+        (localStream || remoteStreams.size > 0) && (
+          <div className="fixed top-20 right-4 bg-black/80 backdrop-blur-sm rounded-lg p-2 shadow-2xl z-50">
+            <div className="grid grid-cols-2 gap-2">
+              {isVideoEnabled && localStream && (
+                <div className="relative">
                   <video
+                    ref={localVideoRef}
                     autoPlay
-                    srcObject={stream}
+                    muted
+                    playsInline
                     className="w-24 h-16 object-cover rounded"
                   />
                   <div className="absolute bottom-1 left-1 text-xs bg-black/70 text-white px-1 rounded">
-                    {player?.username || "Player"}
+                    You
                   </div>
                 </div>
-              );
-            })}
+              )}
+              {Array.from(remoteStreams.entries()).map(([peerUserId, stream]) => {
+                const player = players.find((p) => p.userId === peerUserId);
+                return (
+                  <RemoteVideoTile
+                    key={peerUserId}
+                    stream={stream}
+                    label={player?.username || "Player"}
+                  />
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+    </div>
+  );
+}
+
+function RemoteVideoTile({
+  stream,
+  label,
+}: {
+  stream: MediaStream;
+  label: string;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream;
+  }, [stream]);
+  return (
+    <div className="relative">
+      <video
+        ref={ref}
+        autoPlay
+        playsInline
+        className="w-24 h-16 object-cover rounded"
+      />
+      <div className="absolute bottom-1 left-1 text-xs bg-black/70 text-white px-1 rounded">
+        {label}
+      </div>
     </div>
   );
 }

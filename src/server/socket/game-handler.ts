@@ -56,7 +56,11 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
               position: p.position,
             }));
 
-            await createGameState(gameId, playersForEngine);
+            await createGameState(
+              gameId,
+              playersForEngine,
+              gamePlayer.game.gameMode === "RUSH" ? "RUSH" : "CLASSIC"
+            );
             gameState = getGameState(gameId);
           }
         }
@@ -100,22 +104,25 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         userId,
       });
 
-      // Check if current player is AI and process their turn
-      // Only process AI if it's actually an AI's turn
       if (gameState && gameState.gameStatus === "ACTIVE") {
-        const currentTurnPlayer = gameState.players[gameState.currentTurn];
         if (
-          currentTurnPlayer &&
-          AIPlayer.isAIPlayer(currentTurnPlayer.userId)
+          gameState.gameMode === "RUSH" &&
+          gameState.rushPhase === "ROLL"
         ) {
-          console.log(
-            `[Game ${gameId}] Current turn is AI (${currentTurnPlayer.userId}), processing AI turn`
+          const needsAIRoll = gameState.players.some(
+            (p) => AIPlayer.isAIPlayer(p.userId) && !p.hasRolled
           );
-          await processAITurn(gameId, io);
+          if (needsAIRoll) {
+            setTimeout(() => void processAITurn(gameId, io), 300);
+          }
         } else {
-          console.log(
-            `[Game ${gameId}] Current turn is human (${currentTurnPlayer?.userId}), not processing AI`
-          );
+          const currentTurnPlayer = gameState.players[gameState.currentTurn];
+          if (
+            currentTurnPlayer &&
+            AIPlayer.isAIPlayer(currentTurnPlayer.userId)
+          ) {
+            await processAITurn(gameId, io);
+          }
         }
       }
     } catch (error: any) {
@@ -211,7 +218,6 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         return;
       }
 
-      // Verify it's actually their turn
       const currentTurnPlayer = gameState.players[gameState.currentTurn];
       if (!currentTurnPlayer) {
         console.error(
@@ -221,73 +227,73 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         return;
       }
 
-      if (currentTurnPlayer.userId !== userId) {
-        console.log(
-          `[Game ${gameId}] ❌ TURN MISMATCH - Current turn index: ${gameState.currentTurn}, Current player: ${currentTurnPlayer.userId} (${currentTurnPlayer.id}), Requesting: ${userId} (${enginePlayer.id})`
-        );
-        console.log(
-          `[Game ${gameId}] All players in state:`,
-          gameState.players.map((p, idx) => ({
-            index: idx,
-            id: p.id,
-            userId: p.userId,
-            position: p.position,
-            isCurrentTurn: idx === gameState.currentTurn,
-          }))
-        );
-        const requestingPlayerIndex = gameState.players.findIndex(
-          (p) => p.userId === userId
-        );
-        console.log(
-          `[Game ${gameId}] Requesting player index: ${requestingPlayerIndex}, Current turn index: ${gameState.currentTurn}`
-        );
+      const isRushRollPhase =
+        gameState.gameMode === "RUSH" && gameState.rushPhase === "ROLL";
 
-        // Send updated state to client to sync IMMEDIATELY
-        socket.emit("game:state", { gameState });
-
-        // Also broadcast to room to ensure all clients are synced
-        io.to(`game:${gameId}`).emit("game:state", { gameState });
-
+      if (!isRushRollPhase) {
+        if (currentTurnPlayer.userId !== userId) {
+          console.log(
+            `[Game ${gameId}] ❌ TURN MISMATCH - Current turn index: ${gameState.currentTurn}, Current player: ${currentTurnPlayer.userId} (${currentTurnPlayer.id}), Requesting: ${userId} (${enginePlayer.id})`
+          );
+          socket.emit("game:state", { gameState });
+          io.to(`game:${gameId}`).emit("game:state", { gameState });
+          socket.emit("game:error", {
+            message: `Not your turn. It's ${
+              currentTurnPlayer.userId?.startsWith("AI_")
+                ? "AI"
+                : "another player"
+            }'s turn.`,
+          });
+          return;
+        }
+      } else if (enginePlayer.hasRolled) {
         socket.emit("game:error", {
-          message: `Not your turn. It's ${
-            currentTurnPlayer.userId === "AI_0" ||
-            currentTurnPlayer.userId?.startsWith("AI_")
-              ? "AI"
-              : "another player"
-          }'s turn.`,
+          message: "You already rolled this round",
         });
         return;
       }
 
       console.log(
-        `[Game ${gameId}] Valid roll request from ${userId} (player ${enginePlayer.id}), currentTurn: ${gameState.currentTurn}`
+        `[Game ${gameId}] Valid roll request from ${userId} (player ${enginePlayer.id})`
       );
 
       const diceValue = engine.rollDice(enginePlayer.id);
-      const state = engine.getState();
+      await updateGameState(gameId, engine.getState());
+      const state = getGameState(gameId)!;
 
-      await updateGameState(gameId, state);
-
-      // Broadcast to all players in room first
       io.to(`game:${gameId}`).emit("game:dice-rolled", {
         playerId: gamePlayer.id,
         diceValue,
         state,
       });
 
-      // Calculate and send available moves to the current player (use engine player ID)
+      if (state.gameMode === "RUSH") {
+        if (state.rushPhase === "ROLL") {
+          io.to(`game:${gameId}`).emit("game:available-moves", {
+            moves: [],
+            forUserId: null,
+          });
+          setTimeout(() => void processAITurn(gameId, io), 200);
+        } else if (state.rushPhase === "MOVE") {
+          const cur = state.players[state.currentTurn];
+          const rushMoves = engine.getAvailableMoves(cur.id);
+          io.to(`game:${gameId}`).emit("game:available-moves", {
+            moves: rushMoves,
+            forUserId: cur.userId,
+          });
+          setTimeout(() => void processAITurn(gameId, io), 200);
+        }
+        return;
+      }
+
       const availableMoves = engine.getAvailableMoves(enginePlayer.id);
-      const currentPlayerState = state.players[state.currentTurn];
 
       console.log(
         `[Game ${gameId}] Available moves for ${enginePlayer.id}: ${availableMoves.length}`
       );
 
-      // Send available moves
       socket.emit("game:available-moves", { moves: availableMoves });
 
-      // If no moves available, automatically skip turn after a delay
-      // This happens when player rolled but can't make any moves (e.g., rolled 1-5 with all pieces in home)
       if (availableMoves.length === 0) {
         console.log(
           `[Game ${gameId}] Scheduling auto-skip for player ${enginePlayer.id} (${enginePlayer.userId}) - no moves available (dice: ${state.diceValue})`
@@ -329,7 +335,13 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
           const userIdMatch = stillCurrentPlayer.userId === userIdToSkip;
           const diceValueNotNull = currentState.diceValue !== null;
           const statusActive = currentState.gameStatus === "ACTIVE";
-          if (userIdMatch && diceValueNotNull && statusActive) {
+          const isClassic = currentState.gameMode === "CLASSIC";
+          if (
+            isClassic &&
+            userIdMatch &&
+            diceValueNotNull &&
+            statusActive
+          ) {
             // Re-check available moves to be sure (use the engine player ID)
             const currentAvailableMoves = currentEngine.getAvailableMoves(
               stillCurrentPlayer.id
@@ -357,9 +369,9 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
                 gameState: finalState,
               });
 
-              // Clear available moves for all players
               io.to(`game:${gameIdToSkip}`).emit("game:available-moves", {
                 moves: [],
+                forUserId: null,
               });
               // Check if next player is AI (with a small delay to ensure state is synced)
               setTimeout(async () => {
@@ -423,11 +435,9 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       }
 
       const isGameFinished = engine.movePiece(enginePlayer.id, pieceId);
-      const state = engine.getState();
+      await updateGameState(gameId, engine.getState());
+      const state = getGameState(gameId)!;
 
-      await updateGameState(gameId, state);
-
-      // Record move in database
       await prisma.gameMove.create({
         data: {
           gameId,
@@ -439,24 +449,30 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         },
       });
 
-      // Clear available moves for all players after a move
-      // If player rolled 6, they get another turn but need to roll again first
-      // If turn changed, new player needs to roll first
-      io.to(`game:${gameId}`).emit("game:available-moves", { moves: [] });
+      io.to(`game:${gameId}`).emit("game:available-moves", {
+        moves: [],
+        forUserId: null,
+      });
 
-      // Broadcast to all players
       io.to(`game:${gameId}`).emit("game:piece-moved", {
         playerId: enginePlayer.id,
         pieceId,
         state,
       });
 
-      // If game finished, process payouts
+      if (state.gameMode === "RUSH" && state.rushPhase === "MOVE" && !isGameFinished) {
+        const cur = state.players[state.currentTurn];
+        const nextMoves = engine.getAvailableMoves(cur.id);
+        io.to(`game:${gameId}`).emit("game:available-moves", {
+          moves: nextMoves,
+          forUserId: cur.userId,
+        });
+      }
+
       if (isGameFinished && state.winnerId) {
         await handleGameFinish(gameId, state.winnerId);
       } else {
-        // Check if next player is AI and process their turn
-        await processAITurn(gameId, io);
+        setTimeout(() => void processAITurn(gameId, io), 200);
       }
     } catch (error: any) {
       socket.emit("game:error", { message: error.message });
@@ -497,14 +513,23 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
           return;
         }
 
-        // Only send if it's the player's turn and they've rolled
         const isPlayerTurn =
           gameState.currentTurn === gameState.players.indexOf(gamePlayer);
-        if (isPlayerTurn && gameState.diceValue !== null) {
+        let shouldSendMoves = false;
+        if (gameState.gameMode === "CLASSIC") {
+          shouldSendMoves =
+            isPlayerTurn && gameState.diceValue !== null;
+        } else if (
+          gameState.gameMode === "RUSH" &&
+          gameState.rushPhase === "MOVE"
+        ) {
+          shouldSendMoves =
+            isPlayerTurn && gamePlayer.diceValue !== null;
+        }
+        if (shouldSendMoves) {
           const availableMoves = engine.getAvailableMoves(gamePlayer.id);
           socket.emit("game:available-moves", { moves: availableMoves });
         } else {
-          // Not their turn or haven't rolled, send empty moves
           socket.emit("game:available-moves", { moves: [] });
         }
 
@@ -574,7 +599,6 @@ const aiProcessing = new Set<string>();
  * This function automatically handles AI moves
  */
 async function processAITurn(gameId: string, io: SocketIOServer) {
-  // Prevent concurrent AI processing for the same game
   if (aiProcessing.has(gameId)) {
     return;
   }
@@ -584,64 +608,158 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
 
     const engine = getGameEngine(gameId);
     if (!engine) {
-      aiProcessing.delete(gameId);
       return;
     }
 
-    const state = getGameState(gameId);
+    let state = getGameState(gameId);
     if (!state || state.gameStatus !== "ACTIVE") {
-      aiProcessing.delete(gameId);
+      return;
+    }
+
+    if (state.gameMode === "RUSH" && state.rushPhase === "ROLL") {
+      const aiUnrolled = state.players.find(
+        (p) => AIPlayer.isAIPlayer(p.userId) && !p.hasRolled
+      );
+      if (!aiUnrolled) {
+        return;
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 600 + Math.random() * 600)
+      );
+
+      const diceValue = engine.rollDice(aiUnrolled.id);
+      state = engine.getState();
+      await updateGameState(gameId, state);
+
+      io.to(`game:${gameId}`).emit("game:dice-rolled", {
+        playerId: aiUnrolled.id,
+        diceValue,
+        state,
+      });
+
+      if (state.rushPhase === "ROLL") {
+        io.to(`game:${gameId}`).emit("game:available-moves", {
+          moves: [],
+          forUserId: null,
+        });
+      } else if (state.rushPhase === "MOVE") {
+        const cur = state.players[state.currentTurn];
+        const moves = engine.getAvailableMoves(cur.id);
+        io.to(`game:${gameId}`).emit("game:available-moves", {
+          moves,
+          forUserId: cur.userId,
+        });
+      }
+
+      setTimeout(() => void processAITurn(gameId, io), 200);
+      return;
+    }
+
+    if (state.gameMode === "RUSH" && state.rushPhase === "MOVE") {
+      const currentPlayer = state.players[state.currentTurn];
+      if (!AIPlayer.isAIPlayer(currentPlayer.userId)) {
+        return;
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 800 + Math.random() * 700)
+      );
+
+      const decision = AIPlayer.makeDecision(
+        engine,
+        state,
+        currentPlayer.id
+      );
+
+      if (decision.action === "move" && decision.pieceId !== undefined) {
+        const isGameFinished = engine.movePiece(
+          currentPlayer.id,
+          decision.pieceId
+        );
+        const newState = engine.getState();
+        await updateGameState(gameId, newState);
+
+        await prisma.gameMove.create({
+          data: {
+            gameId,
+            playerId: currentPlayer.userId,
+            diceRoll: newState.lastMove?.diceRoll || 0,
+            moveType: "PIECE_MOVE",
+            fromPosition: newState.lastMove?.fromPosition || 0,
+            toPosition: newState.lastMove?.toPosition || 0,
+          },
+        });
+
+        io.to(`game:${gameId}`).emit("game:piece-moved", {
+          playerId: currentPlayer.id,
+          pieceId: decision.pieceId,
+          state: newState,
+        });
+
+        io.to(`game:${gameId}`).emit("game:available-moves", {
+          moves: [],
+          forUserId: null,
+        });
+
+        if (
+          newState.gameMode === "RUSH" &&
+          newState.rushPhase === "MOVE" &&
+          !isGameFinished
+        ) {
+          const cur = newState.players[newState.currentTurn];
+          const nextMoves = engine.getAvailableMoves(cur.id);
+          io.to(`game:${gameId}`).emit("game:available-moves", {
+            moves: nextMoves,
+            forUserId: cur.userId,
+          });
+        }
+
+        if (isGameFinished && newState.winnerId) {
+          await handleGameFinish(gameId, newState.winnerId);
+        } else {
+          setTimeout(() => void processAITurn(gameId, io), 200);
+        }
+      }
       return;
     }
 
     const currentPlayer = state.players[state.currentTurn];
     if (!currentPlayer) {
-      aiProcessing.delete(gameId);
       return;
     }
 
-    // Check if current player is AI
     if (!AIPlayer.isAIPlayer(currentPlayer.userId)) {
-      aiProcessing.delete(gameId);
-      return; // Not an AI player, wait for human input
+      return;
     }
 
-    // Add a small delay to make AI moves visible (1-2 seconds)
     await new Promise((resolve) =>
       setTimeout(resolve, 1000 + Math.random() * 1000)
     );
 
-    // Make AI decision
     const decision = AIPlayer.makeDecision(engine, state, currentPlayer.id);
 
     if (decision.action === "roll") {
-      // AI rolls dice
       const diceValue = engine.rollDice(currentPlayer.id);
       const newState = engine.getState();
       await updateGameState(gameId, newState);
 
-      // Broadcast dice roll
       io.to(`game:${gameId}`).emit("game:dice-rolled", {
         playerId: currentPlayer.id,
         diceValue,
         state: newState,
       });
 
-      // Get available moves for AI
       const availableMoves = engine.getAvailableMoves(currentPlayer.id);
 
-      // Send available moves (even if empty, for UI consistency)
       io.to(`game:${gameId}`).emit("game:available-moves", {
         moves: availableMoves,
+        forUserId: currentPlayer.userId,
       });
 
       if (availableMoves.length > 0) {
-        // AI can move, make another decision after a short delay
-        setTimeout(async () => {
-          await processAITurn(gameId, io);
-        }, 500);
+        setTimeout(() => void processAITurn(gameId, io), 500);
       } else {
-        // No moves available, force turn to end
         console.log(
           `[Game ${gameId}] AI ${currentPlayer.userId} has no moves, forcing next turn`
         );
@@ -649,21 +767,18 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
         const finalState = engine.getState();
         await updateGameState(gameId, finalState);
 
-        // Broadcast turn change
         io.to(`game:${gameId}`).emit("game:state", {
           gameState: finalState,
         });
 
-        // Clear available moves
-        io.to(`game:${gameId}`).emit("game:available-moves", { moves: [] });
+        io.to(`game:${gameId}`).emit("game:available-moves", {
+          moves: [],
+          forUserId: null,
+        });
 
-        // Check if next player is also AI
-        setTimeout(async () => {
-          await processAITurn(gameId, io);
-        }, 500);
+        setTimeout(() => void processAITurn(gameId, io), 500);
       }
     } else if (decision.action === "move" && decision.pieceId !== undefined) {
-      // AI moves piece
       const isGameFinished = engine.movePiece(
         currentPlayer.id,
         decision.pieceId
@@ -671,7 +786,6 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
       const newState = engine.getState();
       await updateGameState(gameId, newState);
 
-      // Record move in database
       await prisma.gameMove.create({
         data: {
           gameId,
@@ -683,25 +797,21 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
         },
       });
 
-      // Broadcast move
       io.to(`game:${gameId}`).emit("game:piece-moved", {
         playerId: currentPlayer.id,
         pieceId: decision.pieceId,
         state: newState,
       });
 
-      // Clear available moves
-      io.to(`game:${gameId}`).emit("game:available-moves", { moves: [] });
+      io.to(`game:${gameId}`).emit("game:available-moves", {
+        moves: [],
+        forUserId: null,
+      });
 
-      // If game finished, process payouts
       if (isGameFinished && newState.winnerId) {
         await handleGameFinish(gameId, newState.winnerId);
       } else {
-        // If AI rolled 6, they get another turn
-        // Otherwise, check if next player is AI
-        setTimeout(async () => {
-          await processAITurn(gameId, io);
-        }, 500);
+        setTimeout(() => void processAITurn(gameId, io), 500);
       }
     }
   } catch (error: any) {

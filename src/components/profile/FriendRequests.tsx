@@ -163,9 +163,9 @@ export default function FriendRequests({
 
   if (loading) {
     return (
-      <div className="bg-card border border-border rounded-xl p-6">
+      <div className="game-card">
         <div className="flex items-center justify-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500/80" />
         </div>
       </div>
     );
@@ -173,13 +173,12 @@ export default function FriendRequests({
 
   return (
     <div className="space-y-6">
-      {/* Pending Requests */}
       {requests.length > 0 && (
-        <div className="bg-card border border-border rounded-xl p-4 md:p-6 space-y-4">
+        <div className="game-card space-y-4">
           <div className="flex items-center gap-2 mb-4">
-            <UserPlus className="w-5 h-5 text-primary" />
-            <h3 className="text-xl font-semibold">Friend Requests</h3>
-            <span className="px-2 py-1 bg-primary/20 text-primary rounded-full text-xs font-semibold">
+            <UserPlus className="w-5 h-5 text-emerald-400" />
+            <h3 className="text-xl font-semibold text-white/95">Friend Requests</h3>
+            <span className="px-2 py-1 bg-emerald-500/15 text-emerald-300 rounded-full text-xs font-semibold">
               {requests.length}
             </span>
           </div>
@@ -188,7 +187,7 @@ export default function FriendRequests({
             {requests.map((request) => (
               <div
                 key={request.id}
-                className="p-4 bg-background border border-border rounded-lg"
+                className="p-4 rounded-xl bg-black/25 border border-white/10"
               >
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -232,10 +231,10 @@ export default function FriendRequests({
       )}
 
       {/* Add Friend Section */}
-      <div className="bg-card border border-border rounded-xl p-4 md:p-6 space-y-4">
+      <div className="game-card space-y-4">
         <div className="flex items-center gap-2 mb-4">
-          <UserPlus className="w-5 h-5 text-primary" />
-          <h3 className="text-xl font-semibold">Add Friend</h3>
+          <UserPlus className="w-5 h-5 text-emerald-400" />
+          <h3 className="text-xl font-semibold text-white/95">Add Friend</h3>
         </div>
         <div className="flex gap-2">
           <input
@@ -261,17 +260,17 @@ export default function FriendRequests({
       </div>
 
       {/* Friends List */}
-      <div className="bg-card border border-border rounded-xl p-4 md:p-6 space-y-4">
+      <div className="game-card space-y-4">
         <div className="flex items-center gap-2 mb-4">
-          <UserCheck className="w-5 h-5 text-primary" />
-          <h3 className="text-xl font-semibold">Friends</h3>
-          <span className="px-2 py-1 bg-primary/20 text-primary rounded-full text-xs font-semibold">
+          <UserCheck className="w-5 h-5 text-emerald-400" />
+          <h3 className="text-xl font-semibold text-white/95">Friends</h3>
+          <span className="px-2 py-1 bg-emerald-500/15 text-emerald-300 rounded-full text-xs font-semibold">
             {friends.length}
           </span>
         </div>
 
         {friends.length === 0 ? (
-          <div className="text-center py-8 text-foreground/70">
+          <div className="text-center py-8 text-white/60">
             <UserCheck className="w-12 h-12 mx-auto mb-2 opacity-50" />
             <p>No friends yet. Add some friends to play together!</p>
           </div>
@@ -280,15 +279,15 @@ export default function FriendRequests({
             {friends.map((friend) => (
               <div
                 key={friend.id}
-                className="p-4 bg-background border border-border rounded-lg hover:border-primary/50 transition-colors"
+                className="p-4 rounded-xl bg-black/25 border border-white/10 hover:border-emerald-500/30 transition-colors"
               >
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <div className="relative">
-                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-2xl">
+                      <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center text-2xl">
                         {friend.avatar || "👤"}
                       </div>
-                      <CircleDot className="w-3 h-3 text-success absolute -bottom-0 -right-0 bg-card rounded-full" />
+                      <CircleDot className="w-3 h-3 text-emerald-400 absolute -bottom-0 -right-0 bg-zinc-900 rounded-full" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="font-semibold truncate">

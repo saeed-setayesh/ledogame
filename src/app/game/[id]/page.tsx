@@ -26,6 +26,8 @@ export default async function GameRoute({
               id: true,
               username: true,
               avatar: true,
+              level: true,
+              countryCode: true,
             },
           },
         },

@@ -1,16 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { getSocket } from "@/lib/socket/client";
 import LudoBoard from "./LudoBoard";
-import TurnNotificationBar from "./TurnNotificationBar";
 import GameNotification from "./GameNotification";
-import VideoCall from "../video/VideoCall";
+import VideoCall, { type LocalVideoState } from "../video/VideoCall";
 import ScreenRecorder from "./ScreenRecorder";
 import Dice from "./Dice";
-import { LudoGameState, PlayerColor } from "@/lib/game/ludo-engine";
+import {
+  LudoGameState,
+  PlayerColor,
+} from "@/lib/game/ludo-engine";
 import { AIPlayer } from "@/lib/game/ai-player";
+import Image from "next/image";
 
 interface GamePageProps {
   game: any;
@@ -24,52 +28,187 @@ const COLOR_MAP: Record<PlayerColor, string> = {
   YELLOW: "#f1c40f",
 };
 
+const TURN_MS = 45_000;
+
+function flagEmoji(code: string | null | undefined): string {
+  if (!code || code.length !== 2) return "\u{1F3F3}";
+  const upper = code.toUpperCase();
+  const cp = [...upper].map((c) => 127397 + c.charCodeAt(0));
+  try {
+    return String.fromCodePoint(...cp);
+  } catch {
+    return "\u{1F3F3}";
+  }
+}
+
+function isMyRollTurn(state: LudoGameState, userId: string): boolean {
+  const idx = state.players.findIndex((p) => p.userId === userId);
+  if (idx === -1) return false;
+  const me = state.players[idx];
+  if (state.gameMode === "RUSH" && state.rushPhase === "ROLL") {
+    return !me.hasRolled;
+  }
+  if (state.gameMode === "CLASSIC") {
+    return state.currentTurn === idx && !me.hasRolled;
+  }
+  return false;
+}
+
+function isMyMoveTurn(state: LudoGameState, userId: string): boolean {
+  const idx = state.players.findIndex((p) => p.userId === userId);
+  if (idx === -1) return false;
+  if (state.gameMode === "CLASSIC") {
+    return state.currentTurn === idx;
+  }
+  if (state.gameMode === "RUSH" && state.rushPhase === "MOVE") {
+    return state.currentTurn === idx;
+  }
+  return false;
+}
+
+function TurnRing({ endsAt }: { endsAt: string | null }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!endsAt) return;
+    const id = setInterval(() => setTick(Date.now()), 200);
+    return () => clearInterval(id);
+  }, [endsAt]);
+  if (!endsAt) return null;
+  const left = Math.max(0, new Date(endsAt).getTime() - Date.now());
+  const frac = Math.min(1, left / TURN_MS);
+  const r = 20;
+  const c = 2 * Math.PI * r;
+  const dashoffset = c * (1 - frac);
+
+  return (
+    <svg
+      className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none"
+      viewBox="0 0 48 48"
+      aria-hidden
+    >
+      <circle
+        cx="24"
+        cy="24"
+        r={r}
+        fill="none"
+        stroke="rgba(255,255,255,0.12)"
+        strokeWidth="3"
+      />
+      <circle
+        cx="24"
+        cy="24"
+        r={r}
+        fill="none"
+        stroke="rgba(120, 200, 160, 0.95)"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={dashoffset}
+        className="transition-[stroke-dashoffset] duration-200"
+      />
+    </svg>
+  );
+}
+
 function PlayerCard({
   player,
-  isCurrentTurn,
+  isTimerActive,
   isMe,
   game,
+  gameState,
+  localVideo,
 }: {
   player: { userId: string; color: PlayerColor; pieces: any[] };
-  isCurrentTurn: boolean;
+  isTimerActive: boolean;
   isMe: boolean;
   game: any;
+  gameState: LudoGameState;
+  localVideo: LocalVideoState | null;
 }) {
   const gamePlayer = game?.players?.find((p: any) => p.userId === player.userId);
   const user = gamePlayer?.user;
-  const username = user?.username || (AIPlayer.isAIPlayer(player.userId) ? AIPlayer.getAIUsername(player.userId) : "Player");
+  const username =
+    user?.username ||
+    (AIPlayer.isAIPlayer(player.userId)
+      ? AIPlayer.getAIUsername(player.userId)
+      : "Player");
   const avatar = user?.avatar || "👤";
+  const level = typeof user?.level === "number" ? user.level : 1;
   const finishedCount = player.pieces.filter((p: any) => p.isFinished).length;
+  const showLive =
+    isMe && localVideo?.enabled && localVideo.stream && isVideoLive(localVideo.stream);
 
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 rounded-xl"
+      className="flex items-center gap-2 px-2 py-2 rounded-xl min-w-0 max-w-[9.5rem]"
       style={{
-        background: "rgba(20,8,8,0.85)",
-        border: `1px solid ${isCurrentTurn ? "rgba(255,215,0,0.4)" : "rgba(255,215,0,0.1)"}`,
-        boxShadow: isCurrentTurn ? "0 0 12px rgba(255,215,0,0.2)" : "none",
+        background: "var(--game-panel)",
+        border: `1px solid ${isTimerActive ? "rgba(120,200,160,0.45)" : "rgba(255,255,255,0.08)"}`,
+        boxShadow: isTimerActive
+          ? "0 0 12px rgba(80, 160, 120, 0.2)"
+          : "none",
       }}
     >
       <div
-        className="w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0"
+        className="relative w-11 h-11 shrink-0 rounded-full overflow-hidden"
         style={{
-          background: `linear-gradient(180deg, ${COLOR_MAP[player.color]}, ${COLOR_MAP[player.color]}99)`,
-          border: "2px solid rgba(255,215,0,0.3)",
+          boxShadow: `inset 0 0 0 2px ${COLOR_MAP[player.color]}88`,
         }}
       >
-        {avatar}
+        {isTimerActive && <TurnRing endsAt={gameState.turnEndsAt} />}
+        {showLive && localVideo?.stream ? (
+          <LiveAvatar stream={localVideo.stream} />
+        ) : (
+          <div
+            className="absolute inset-0 flex items-center justify-center text-lg"
+            style={{
+              background: `linear-gradient(180deg, ${COLOR_MAP[player.color]}, ${COLOR_MAP[player.color]}99)`,
+            }}
+          >
+            {avatar}
+          </div>
+        )}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-bold truncate" style={{ color: "#ffd700" }}>
-          {username}
+        <div className="flex items-center gap-1">
+          <span className="text-sm leading-none" title={user?.countryCode || ""}>
+            {flagEmoji(user?.countryCode)}
+          </span>
+          <div className="text-[11px] font-bold truncate text-white/95">
+            {username}
+          </div>
         </div>
-        <div className="flex items-center gap-1 text-[10px] opacity-60">
-          <span>Lv.1</span>
+        <div className="flex items-center gap-1 text-[10px] text-white/55 mt-0.5">
+          <span>Lv.{level}</span>
           <span>•</span>
           <span>{finishedCount}/4</span>
         </div>
       </div>
     </div>
+  );
+}
+
+function isVideoLive(stream: MediaStream) {
+  return stream.getVideoTracks().some((t) => t.enabled && t.readyState === "live");
+}
+
+function LiveAvatar({ stream }: { stream: MediaStream }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const v = ref.current;
+    if (v) v.srcObject = stream;
+    return () => {
+      if (v) v.srcObject = null;
+    };
+  }, [stream]);
+  return (
+    <video
+      ref={ref}
+      autoPlay
+      muted
+      playsInline
+      className="absolute inset-0 w-full h-full object-cover scale-[1.02]"
+    />
   );
 }
 
@@ -79,6 +218,12 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   const [availableMoves, setAvailableMoves] = useState<number[]>([]);
   const [showNoMovesNotification, setShowNoMovesNotification] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
+  const [localVideo, setLocalVideo] = useState<LocalVideoState | null>(null);
+  const gameStateRef = useRef<LudoGameState | null>(null);
+
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -89,13 +234,7 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
       "game:state",
       ({ gameState: state }: { gameState: LudoGameState }) => {
         setGameState(state);
-        const playerIndex = state.players.findIndex(
-          (p) => p.userId === currentUserId
-        );
-        const isMyTurn =
-          playerIndex !== -1 && state.currentTurn === playerIndex;
-
-        if (!isMyTurn) {
+        if (!isMyMoveTurn(state, currentUserId)) {
           setAvailableMoves([]);
         }
       }
@@ -103,41 +242,64 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
 
     socket.on("game:dice-rolled", ({ state }: { state: LudoGameState }) => {
       setGameState(state);
-      const playerIndex = state.players.findIndex(
-        (p) => p.userId === currentUserId
-      );
-      const isMyTurn = playerIndex !== -1 && state.currentTurn === playerIndex;
-
-      if (!isMyTurn) {
+      if (state.gameMode === "RUSH" && state.rushPhase === "ROLL") {
+        setAvailableMoves([]);
+      } else if (!isMyMoveTurn(state, currentUserId)) {
         setAvailableMoves([]);
       }
     });
 
     socket.on("game:piece-moved", ({ state }: { state: LudoGameState }) => {
       setGameState(state);
-      setAvailableMoves([]);
+      if (!isMyMoveTurn(state, currentUserId)) {
+        setAvailableMoves([]);
+      }
     });
 
-    socket.on("game:available-moves", ({ moves }: { moves: number[] }) => {
-      if (gameState) {
-        const playerIndex = gameState.players.findIndex(
-          (p) => p.userId === currentUserId
-        );
-        const isMyTurn =
-          playerIndex !== -1 && gameState.currentTurn === playerIndex;
+    socket.on(
+      "game:available-moves",
+      (payload: { moves: number[]; forUserId?: string | null }) => {
+        const { moves, forUserId } = payload;
+        const st = gameStateRef.current;
 
-        if (isMyTurn) {
+        if (forUserId === null) {
+          setAvailableMoves([]);
+          return;
+        }
+        if (forUserId !== undefined) {
+          if (forUserId !== currentUserId) {
+            setAvailableMoves([]);
+            return;
+          }
           setAvailableMoves(moves);
-          if (moves.length === 0 && gameState.diceValue !== null) {
+          if (
+            moves.length === 0 &&
+            st?.gameMode === "CLASSIC" &&
+            st.diceValue !== null
+          ) {
+            setShowNoMovesNotification(true);
+          }
+          return;
+        }
+
+        if (!st) {
+          setAvailableMoves(moves);
+          return;
+        }
+        if (isMyMoveTurn(st, currentUserId)) {
+          setAvailableMoves(moves);
+          if (
+            moves.length === 0 &&
+            st.gameMode === "CLASSIC" &&
+            st.diceValue !== null
+          ) {
             setShowNoMovesNotification(true);
           }
         } else {
           setAvailableMoves([]);
         }
-      } else {
-        setAvailableMoves(moves);
       }
-    });
+    );
 
     socket.on("game:error", ({ message }: { message: string }) => {
       console.error("[Client] Game error:", message);
@@ -149,40 +311,16 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
     };
   }, [game.id, currentUserId]);
 
-  useEffect(() => {
-    if (gameState) {
-      const playerIndex = gameState.players.findIndex(
-        (p) => p.userId === currentUserId
-      );
-      const isMyTurn =
-        playerIndex !== -1 && gameState.currentTurn === playerIndex;
-      if (!isMyTurn) {
-        setAvailableMoves([]);
-      }
-    }
-  }, [gameState, currentUserId]);
-
   const handleRollDice = () => {
     if (!gameState) return;
+    const idx = gameState.players.findIndex((p) => p.userId === currentUserId);
+    const me = idx >= 0 ? gameState.players[idx] : null;
 
-    const playerIndex = gameState.players.findIndex(
-      (p) => p.userId === currentUserId
-    );
-    const isMyTurn =
-      playerIndex !== -1 && gameState.currentTurn === playerIndex;
-    const currentPlayer = gameState.players[playerIndex];
-    const currentTurnPlayer = gameState.players[gameState.currentTurn];
-
-    if (!isMyTurn) {
-      alert(
-        `Not your turn. It's ${
-          currentTurnPlayer?.userId?.startsWith("AI_") ? "AI" : "another player"
-        }'s turn.`
-      );
+    if (!isMyRollTurn(gameState, currentUserId)) {
+      alert("You cannot roll right now.");
       return;
     }
-
-    if (currentPlayer?.hasRolled) return;
+    if (me?.hasRolled && gameState.gameMode === "CLASSIC") return;
 
     const socket = getSocket();
     socket.emit("game:roll-dice", { gameId: game.id, userId: currentUserId });
@@ -213,10 +351,21 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
     router.push("/lobby");
   };
 
+  const goLobby = () => {
+    router.push("/lobby");
+  };
+
+  const potLabel = useMemo(() => {
+    const n = gameState?.players.length ?? 0;
+    const fee = game.entryFee ?? "0";
+    const pot = game.totalPot ?? "0";
+    return `${n} × ${fee} → Pot ${pot} USDT`;
+  }, [game.entryFee, game.totalPot, gameState?.players.length]);
+
   if (!gameState) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: "#1a0808" }}>
-        <div className="text-center text-white">
+      <div className="game-shell-bg min-h-dvh flex items-center justify-center">
+        <div className="text-center text-white/90">
           <div className="text-xl mb-4">Loading game...</div>
           {game.status === "WAITING" && (
             <div className="text-sm opacity-70">
@@ -233,56 +382,121 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   );
   const currentPlayer =
     playerIndex !== -1 ? gameState.players[playerIndex] : null;
-  const isMyTurn = playerIndex !== -1 && gameState.currentTurn === playerIndex;
+
+  const myMoveTurn = isMyMoveTurn(gameState, currentUserId);
+  const myRollTurn = isMyRollTurn(gameState, currentUserId);
+
   const isPracticeMode =
     gameState.players.some((p) => p.userId.startsWith("AI_")) &&
     gameState.players.length === 2;
 
-  // Radial player layout: left column = index 0,1; right column = index 2,3
   const leftPlayers = gameState.players.slice(0, 2);
   const rightPlayers = gameState.players.slice(2, 4);
 
+  let turnHint = "";
+  if (gameState.gameMode === "RUSH" && gameState.rushPhase === "ROLL") {
+    turnHint =
+      myRollTurn && !currentPlayer?.hasRolled
+        ? "Roll your dice"
+        : "Waiting for all players to roll…";
+  } else if (gameState.gameMode === "RUSH" && gameState.rushPhase === "MOVE") {
+    if (myMoveTurn) {
+      turnHint =
+        currentPlayer?.diceValue != null ? "Move a piece" : "…";
+    } else {
+      const cur = gameState.players[gameState.currentTurn];
+      turnHint = `${cur?.userId?.startsWith("AI_") ? "AI" : "Opponent"} is moving`;
+    }
+  } else if (myRollTurn && !currentPlayer?.hasRolled) {
+    turnHint = "Your turn — roll";
+  } else if (myMoveTurn && availableMoves.length > 0) {
+    turnHint = "Choose a piece";
+  } else {
+    const cur = gameState.players[gameState.currentTurn];
+    turnHint = `${cur?.userId?.startsWith("AI_") ? "AI" : "Opponent"}'s turn`;
+  }
+
+  const playerTimerActive = (idx: number) => {
+    const p = gameState.players[idx];
+    if (gameState.gameMode === "CLASSIC") {
+      return gameState.currentTurn === idx;
+    }
+    if (gameState.rushPhase === "ROLL") {
+      return !p.hasRolled;
+    }
+    if (gameState.rushPhase === "MOVE") {
+      return gameState.currentTurn === idx;
+    }
+    return false;
+  };
+
   return (
-    <div
-      className="min-h-screen relative flex flex-col pb-28 text-white overflow-hidden"
-      style={{
-        background:
-          "linear-gradient(180deg, #1a0808 0%, #2b0f0f 50%, #1a0808 100%)",
-      }}
-    >
-      {/* Ornate red background pattern */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-30"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M30 5 Q35 20 30 35 Q25 20 30 5' fill='none' stroke='%23b83c3c' stroke-width='0.5' opacity='0.4'/%3E%3Ccircle cx='30' cy='30' r='5' fill='none' stroke='%23b83c3c' stroke-width='0.3' opacity='0.3'/%3E%3C/svg%3E")`,
-        }}
-      />
+    <div className="game-shell-bg min-h-dvh relative flex flex-col overflow-hidden pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)]">
+      <header className="relative z-40 flex items-center justify-between px-2 pt-2 max-w-3xl mx-auto w-full">
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              className="min-h-12 min-w-12 flex items-center justify-center rounded-xl bg-black/30 border border-white/10"
+              aria-label="Settings"
+            >
+              <Image
+                src="/game/icons/settings.png"
+                alt=""
+                width={28}
+                height={28}
+                className="opacity-90"
+                unoptimized
+              />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              className="z-50 min-w-[180px] rounded-lg p-1 bg-zinc-900 border border-white/10 text-white text-sm shadow-xl"
+              sideOffset={6}
+            >
+              <DropdownMenu.Item className="px-3 py-2 rounded cursor-default outline-none hover:bg-white/10">
+                Sound (coming soon)
+              </DropdownMenu.Item>
+              {isPracticeMode && (
+                <DropdownMenu.Item className="px-3 py-2 rounded cursor-default outline-none text-white/60">
+                  Practice mode
+                </DropdownMenu.Item>
+              )}
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
 
-      {/* Exit - minimal top-left */}
-      <button
-        onClick={handleExitGame}
-        disabled={isLeaving}
-        className="fixed top-4 left-4 z-50 w-10 h-10 rounded-lg flex items-center justify-center opacity-60 hover:opacity-100 transition-opacity"
-        style={{ background: "rgba(0,0,0,0.4)" }}
-        title="Exit"
-      >
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-
-      {/* Video/Recorder - top right */}
-      <div className="fixed top-4 right-4 z-30 flex gap-2">
-        <VideoCall
-          gameId={game.id}
-          userId={currentUserId}
-          players={game.players?.map((p: any) => ({
-            id: p.id,
-            userId: p.userId,
-            username: p.user?.username,
-          })) || []}
+        <Image
+          src="/game/logo.png"
+          alt="Ledo"
+          width={120}
+          height={40}
+          className="h-9 w-auto object-contain opacity-95"
+          unoptimized
         />
-        <ScreenRecorder gameId={game.id} />
+
+        <div className="w-12" />
+      </header>
+
+      <div className="fixed left-2 top-1/2 -translate-y-1/2 z-40 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={handleExitGame}
+          disabled={isLeaving}
+          className="min-h-12 min-w-12 flex items-center justify-center rounded-xl bg-black/35 border border-white/12"
+          title="Exit"
+        >
+          <Image src="/game/icons/exit.png" alt="" width={26} height={26} unoptimized />
+        </button>
+        <button
+          type="button"
+          onClick={goLobby}
+          className="min-h-12 min-w-12 flex items-center justify-center rounded-xl bg-black/35 border border-white/12"
+          title="Lobby"
+        >
+          <Image src="/game/icons/lobby.png" alt="" width={26} height={26} unoptimized />
+        </button>
       </div>
 
       <GameNotification
@@ -293,96 +507,153 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
         onClose={() => setShowNoMovesNotification(false)}
       />
 
-      {/* Main layout: players left | board | players right */}
-      <div className="flex-1 flex items-center justify-center gap-2 md:gap-4 px-2 py-20 md:py-24">
-        {/* Left player cards */}
-        <div className="hidden sm:flex flex-col gap-2 w-24 md:w-28 shrink-0">
-          {leftPlayers.map((player, idx) => (
+      <p className="text-center text-xs text-white/55 px-4 py-1">{turnHint}</p>
+
+      <div className="flex-1 flex items-center justify-center gap-1 md:gap-3 px-1 md:px-3">
+        <div className="hidden sm:flex flex-col gap-2 w-[9.5rem] shrink-0">
+          {leftPlayers.map((player) => (
             <PlayerCard
               key={player.userId}
               player={player}
-              isCurrentTurn={gameState.currentTurn === gameState.players.indexOf(player)}
+              isTimerActive={
+                playerTimerActive(gameState.players.indexOf(player))
+              }
               isMe={player.userId === currentUserId}
               game={game}
+              gameState={gameState}
+              localVideo={localVideo}
             />
           ))}
         </div>
 
-        {/* Board container - wooden frame */}
         <div
-          className="relative rounded-2xl p-3 md:p-4 shrink-0"
+          className="relative rounded-2xl p-2 md:p-3 shrink-0"
           style={{
-            background: "linear-gradient(180deg, #8b6914 0%, #6b4a0a 50%, #4a3308 100%)",
-            boxShadow: "0 0 40px rgba(0,0,0,0.5), inset 0 2px 4px rgba(255,255,255,0.1)",
-            border: "3px solid rgba(255,215,0,0.2)",
+            background:
+              "linear-gradient(180deg, rgba(60,50,35,0.9) 0%, rgba(35,28,20,0.95) 100%)",
+            boxShadow:
+              "0 0 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06)",
+            border: "2px solid rgba(255,255,255,0.08)",
           }}
         >
-          <div className="bg-amber-100/90 rounded-xl p-2 md:p-3">
-            <LudoBoard
-              gameState={gameState}
-              currentUserId={currentUserId}
-              onMovePiece={handleMovePiece}
-              availableMoves={availableMoves}
-            />
-          </div>
+          <LudoBoard
+            gameState={gameState}
+            currentUserId={currentUserId}
+            onMovePiece={handleMovePiece}
+            availableMoves={availableMoves}
+            isMyTurn={myMoveTurn}
+          />
         </div>
 
-        {/* Right player cards */}
-        <div className="hidden sm:flex flex-col gap-2 w-24 md:w-28 shrink-0">
+        <div className="hidden sm:flex flex-col gap-2 w-[9.5rem] shrink-0">
           {rightPlayers.map((player) => (
             <PlayerCard
               key={player.userId}
               player={player}
-              isCurrentTurn={gameState.currentTurn === gameState.players.indexOf(player)}
+              isTimerActive={
+                playerTimerActive(gameState.players.indexOf(player))
+              }
               isMe={player.userId === currentUserId}
               game={game}
+              gameState={gameState}
+              localVideo={localVideo}
             />
           ))}
         </div>
       </div>
 
-      {/* Mobile: player strip above board */}
-      <div className="sm:hidden flex justify-center gap-2 px-2 pb-2">
+      <div className="sm:hidden flex justify-center gap-1.5 px-2 pb-1 flex-wrap">
         {gameState.players.slice(0, 4).map((player) => (
           <PlayerCard
             key={player.userId}
             player={player}
-            isCurrentTurn={gameState.currentTurn === gameState.players.indexOf(player)}
+            isTimerActive={
+              playerTimerActive(gameState.players.indexOf(player))
+            }
             isMe={player.userId === currentUserId}
             game={game}
+            gameState={gameState}
+            localVideo={localVideo}
           />
         ))}
       </div>
 
-      {/* Dice area - white oval at bottom center (like the image) */}
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30">
-        <div
-          className="flex items-center justify-center px-8 py-4 rounded-full"
-          style={{
-            background: "linear-gradient(180deg, #f5f5f5 0%, #e8e8e8 100%)",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.8)",
-            border: "2px solid rgba(0,0,0,0.08)",
-          }}
-        >
-          <Dice
-            value={gameState.diceValue}
-            onRoll={
-              isMyTurn && !currentPlayer?.hasRolled ? handleRollDice : undefined
+      <div
+        className="fixed bottom-0 left-0 right-0 z-30 flex items-end justify-between gap-2 px-2 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] border-t border-white/8"
+        style={{ background: "var(--game-bottom-bar)" }}
+      >
+        <div className="flex flex-col gap-2 shrink-0 max-w-[40%]">
+          <div
+            className="text-[10px] md:text-xs text-white/70 leading-tight px-2 py-1.5 rounded-lg bg-black/25 border border-white/6 select-none"
+            title="Prize pool"
+          >
+            {potLabel}
+          </div>
+          <ScreenRecorder gameId={game.id} iconSrc="/game/icons/record.png" />
+        </div>
+
+        <div className="flex-1 flex justify-center items-end overflow-x-auto">
+          <div
+            className="flex items-end justify-center gap-2 md:gap-3 px-3 py-2 rounded-2xl bg-white/10 border border-white/10"
+            style={{
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
+            }}
+          >
+            {gameState.gameMode === "RUSH" ? (
+              gameState.players.map((p, i) => (
+                <Dice
+                  key={p.id}
+                  compact
+                  label={p.color.slice(0, 1)}
+                  value={
+                    p.hasRolled || gameState.rushPhase === "MOVE"
+                      ? p.diceValue
+                      : null
+                  }
+                  onRoll={
+                    p.userId === currentUserId &&
+                    gameState.rushPhase === "ROLL" &&
+                    !p.hasRolled
+                      ? handleRollDice
+                      : undefined
+                  }
+                  disabled={
+                    p.userId !== currentUserId ||
+                    gameState.rushPhase !== "ROLL" ||
+                    p.hasRolled
+                  }
+                />
+              ))
+            ) : (
+              <Dice
+                value={gameState.diceValue}
+                onRoll={
+                  myRollTurn && !currentPlayer?.hasRolled
+                    ? handleRollDice
+                    : undefined
+                }
+                disabled={!myRollTurn || !!currentPlayer?.hasRolled}
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="shrink-0 flex items-center">
+          <VideoCall
+            gameId={game.id}
+            userId={currentUserId}
+            compact
+            onLocalVideoChange={setLocalVideo}
+            players={
+              game.players?.map((p: any) => ({
+                id: p.id,
+                userId: p.userId,
+                username: p.user?.username,
+              })) || []
             }
-            disabled={!isMyTurn || currentPlayer?.hasRolled || false}
-            rolling={false}
-            variant="white"
           />
         </div>
       </div>
-
-      <TurnNotificationBar
-        gameState={gameState}
-        currentUserId={currentUserId}
-        availableMoves={availableMoves}
-        onRollDice={handleRollDice}
-        isPracticeMode={isPracticeMode}
-      />
     </div>
   );
 }

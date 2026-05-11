@@ -141,7 +141,11 @@ export async function POST(request: Request) {
     players.sort((a, b) => a.position - b.position);
 
     // Initialize game state with all players
-    await createGameState(game.id, players);
+    await createGameState(
+      game.id,
+      players,
+      game.gameMode === "RUSH" ? "RUSH" : "CLASSIC"
+    );
 
     console.log(
       `[Game ${game.id}] Created game state with players:`,

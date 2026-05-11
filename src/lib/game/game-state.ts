@@ -1,22 +1,48 @@
 import { prisma } from "@/lib/prisma";
-import { LudoEngine, LudoGameState } from "./ludo-engine";
+import {
+  LudoEngine,
+  LudoGameState,
+  normalizeGameState,
+  type GameModeType,
+  type PlayerColor,
+} from "./ludo-engine";
 
-// In-memory game state storage
 const activeGames = new Map<
   string,
   { engine: LudoEngine; state: LudoGameState }
 >();
 
+/** Countdown for roll/move; server stamps on each persisted state update. */
+export const TURN_COUNTDOWN_MS = 45_000;
+
+export function stampTurnDeadline(state: LudoGameState): LudoGameState {
+  if (state.gameStatus !== "ACTIVE") {
+    return { ...state, turnEndsAt: null };
+  }
+  return {
+    ...state,
+    turnEndsAt: new Date(Date.now() + TURN_COUNTDOWN_MS).toISOString(),
+  };
+}
+
 export async function createGameState(
   gameId: string,
-  players: { id: string; userId: string; color: string; position: number }[]
+  players: { id: string; userId: string; color: string; position: number }[],
+  gameMode: GameModeType = "CLASSIC"
 ) {
-  const engine = new LudoEngine(players);
-  const state = engine.getState();
+  const engine = new LudoEngine(
+    players.map((p) => ({
+      id: p.id,
+      userId: p.userId,
+      color: p.color as PlayerColor,
+      position: p.position,
+    })),
+    gameMode
+  );
+  const state = stampTurnDeadline(engine.getState());
 
   activeGames.set(gameId, { engine, state });
 
-  // Persist initial state to database
   await prisma.game.update({
     where: { id: gameId },
     data: {
@@ -40,14 +66,15 @@ export function getGameEngine(gameId: string): LudoEngine | null {
 export async function updateGameState(gameId: string, state: LudoGameState) {
   const game = activeGames.get(gameId);
   if (game) {
-    game.state = state;
-    // Persist to database for rejoin capability
+    const stamped = stampTurnDeadline(state);
+    game.state = stamped;
+    game.engine.setState(stamped);
     await prisma.game.update({
       where: { id: gameId },
       data: {
-        gameState: state as any,
-        currentTurn: state.currentTurn,
-        diceValue: state.diceValue,
+        gameState: stamped as any,
+        currentTurn: stamped.currentTurn,
+        diceValue: stamped.diceValue,
       },
     });
   }
@@ -74,28 +101,31 @@ export async function loadGameFromDatabase(
     return null;
   }
 
-  // Recreate engine from players
   const players = game.players.map((p) => ({
     id: p.id,
     userId: p.userId,
-    color: p.color as any,
+    color: p.color as PlayerColor,
     position: p.position,
   }));
 
-  const engine = new LudoEngine(players);
+  const modeFromDb: GameModeType =
+    game.gameMode === "RUSH" ? "RUSH" : "CLASSIC";
 
-  // If we have saved state, try to restore it
   if (game.gameState) {
-    const savedState = game.gameState as any as LudoGameState;
-    // Use saved state if it's valid and has the same number of players
-    if (savedState.players && savedState.players.length === players.length) {
-      activeGames.set(gameId, { engine, state: savedState });
-      return savedState;
+    const raw = { ...(game.gameState as object) } as Record<string, unknown>;
+    if (!raw.gameMode) raw.gameMode = modeFromDb;
+    const normalized = normalizeGameState(raw);
+    if (normalized.players.length === players.length) {
+      const engine = new LudoEngine(players, normalized.gameMode);
+      engine.setState(normalized);
+      const state = stampTurnDeadline(engine.getState());
+      activeGames.set(gameId, { engine, state });
+      return state;
     }
   }
 
-  // Otherwise use fresh state from engine
-  const state = engine.getState();
+  const engine = new LudoEngine(players, modeFromDb);
+  const state = stampTurnDeadline(engine.getState());
   activeGames.set(gameId, { engine, state });
 
   return state;

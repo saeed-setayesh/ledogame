@@ -12,10 +12,10 @@ import {
   Bot,
   Play,
   Settings,
-  Dices,
   Trophy,
   Sparkles,
 } from "lucide-react";
+import Image from "next/image";
 
 interface LobbyProps {
   userId: string;
@@ -82,21 +82,26 @@ export default function Lobby({ userId }: LobbyProps) {
   };
 
   return (
-    <div className="game-bg p-4">
+    <div className="game-shell-bg p-4 min-h-dvh">
       <div className="max-w-2xl mx-auto space-y-4 md:space-y-6">
-        {/* Header */}
         <div className="text-center mb-4 md:mb-6">
-          <div className="flex items-center justify-center gap-3 mb-2">
-            <Dices className="w-8 h-8 md:w-10 md:h-10 animate-float" style={{ color: "#ffd700" }} />
-            <h1 className="text-3xl md:text-5xl font-extrabold tracking-wider" style={{ color: "#ffd700", textShadow: "0 0 30px rgba(255,215,0,0.25)" }}>
+          <div className="flex flex-col items-center gap-3 mb-2">
+            <Image
+              src="/game/logo.png"
+              alt="Ledo"
+              width={200}
+              height={64}
+              className="h-12 md:h-16 w-auto object-contain"
+              unoptimized
+            />
+            <h1 className="text-2xl md:text-4xl font-extrabold tracking-wide text-white/95">
               Create Game
             </h1>
-            <Dices className="w-8 h-8 md:w-10 md:h-10 animate-float" style={{ color: "#ffd700", animationDelay: "1.5s" }} />
           </div>
-          <p className="text-sm md:text-base opacity-50">
+          <p className="text-sm md:text-base text-white/50">
             Set up your game and invite friends to play
           </p>
-          <div className="game-divider mt-4" />
+          <div className="game-divider mt-4 opacity-40" />
         </div>
 
         {/* Game Mode: Classic vs Rush */}

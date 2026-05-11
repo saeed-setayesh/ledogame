@@ -14,63 +14,44 @@ interface GamePieceProps {
   canMove?: boolean;
 }
 
-const colorClasses: Record<PlayerColor, string> = {
-  RED: "piece-gloss piece-red",
-  BLUE: "piece-gloss piece-blue",
-  GREEN: "piece-gloss piece-green",
-  YELLOW: "piece-gloss piece-yellow",
+const WOOD: Record<PlayerColor, string> = {
+  RED: "/game/pieces/wood-red.png",
+  BLUE: "/game/pieces/wood-blue.png",
+  GREEN: "/game/pieces/wood-green.png",
+  YELLOW: "/game/pieces/wood-yellow.png",
 };
 
-// Board position mapping (15x15 grid)
-// Convert position number to row/col on the board
-// The board has a cross pattern with paths around it
 function getBoardPosition(
   position: number,
   color: PlayerColor
 ): React.CSSProperties {
-  // Board is 15x15 grid (0-14 for rows and cols)
-  const cellSize = 100 / 15; // Percentage
-
-  // Calculate position based on the board layout
-  // The main path goes around the board in a square pattern
-  // Row 6 and Col 6-8 are the center cross (safe zone)
-
+  const cellSize = 100 / 15;
   let row = 6;
   let col = 6;
 
   if (position >= 0 && position <= 51) {
-    // Map position to board coordinates
-    // Path goes: right along row 6, down col 8, left along row 8, up col 6, repeat
     if (position < 6) {
-      // Top horizontal (row 6, cols 0-5)
       row = 6;
       col = position;
     } else if (position < 13) {
-      // Right vertical (rows 0-6, col 8)
       row = 12 - position;
       col = 8;
     } else if (position < 19) {
-      // Top horizontal right side (row 6, cols 9-14)
       row = 6;
       col = position + 1;
     } else if (position < 26) {
-      // Right vertical bottom (rows 7-13, col 8)
       row = position - 12;
       col = 8;
     } else if (position < 32) {
-      // Bottom horizontal (row 8, cols 9-14)
       row = 8;
       col = 38 - position;
     } else if (position < 39) {
-      // Left vertical bottom (rows 9-14, col 6)
       row = position - 23;
       col = 6;
     } else if (position < 45) {
-      // Bottom horizontal left (row 8, cols 0-5)
       row = 8;
       col = 44 - position;
     } else {
-      // Left vertical top (rows 0-5, col 6)
       row = 50 - position;
       col = 6;
     }
@@ -85,8 +66,6 @@ function getBoardPosition(
 }
 
 function getHomePosition(color: PlayerColor): React.CSSProperties {
-  // Position pieces in home areas (corners)
-  // Responsive positioning based on home area size
   const homePositions: Record<PlayerColor, React.CSSProperties> = {
     RED: { top: "8px", left: "8px", zIndex: 10 },
     BLUE: { top: "8px", right: "8px", left: "auto", zIndex: 10 },
@@ -113,35 +92,35 @@ export default function GamePiece({
   canMove,
 }: GamePieceProps) {
   if (isFinished) {
-    return null; // Piece is finished, don't render
+    return null;
   }
 
   return (
     <div
       onClick={onClick}
       className={cn(
-        "w-8 h-8 md:w-10 md:h-10 rounded-full border-2 md:border-[3px]",
-        colorClasses[color],
+        "w-8 h-8 md:w-10 md:h-10 rounded-full border-2 md:border-[3px] border-black/25",
         "shadow-lg transition-all duration-300",
-        "flex items-center justify-center",
-        "touch-manipulation", // Better touch handling on mobile
+        "flex items-center justify-center touch-manipulation bg-cover bg-center",
+        color === "RED" && "ring-1 ring-red-900/40",
+        color === "BLUE" && "ring-1 ring-blue-900/40",
+        color === "GREEN" && "ring-1 ring-green-900/40",
+        color === "YELLOW" && "ring-1 ring-amber-900/40",
         canMove &&
           "cursor-pointer hover:scale-125 active:scale-110 hover:shadow-2xl hover:z-20",
         canMove && "animate-pulse-glow",
         selected &&
           "ring-4 ring-white ring-offset-2 ring-offset-gray-800 scale-125 z-20",
-        !canMove && "opacity-60 cursor-not-allowed"
+        !canMove && "opacity-85 cursor-not-allowed"
       )}
       style={{
         position: "absolute",
-        ...(isHome
-          ? getHomePosition(color)
-          : getBoardPosition(position, color)),
+        backgroundImage: `url(${WOOD[color]})`,
+        ...(isHome ? getHomePosition(color) : getBoardPosition(position, color)),
       }}
     >
-      <div className="w-4 h-4 md:w-5 md:h-5 rounded-full bg-white/40 shadow-inner" />
       {canMove && (
-        <div className="absolute inset-0 rounded-full bg-white/20 animate-ping" />
+        <div className="absolute inset-0 rounded-full bg-white/15 animate-ping" />
       )}
     </div>
   );

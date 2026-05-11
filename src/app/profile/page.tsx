@@ -22,6 +22,7 @@ export default async function ProfilePage() {
       totalWins: true,
       walletBalance: true,
       avatar: true,
+      countryCode: true,
       createdAt: true,
     },
   });

@@ -4,6 +4,7 @@ import "./globals.css";
 import Providers from "@/components/providers/session-provider";
 import InstallPrompt from "@/components/ui/InstallPrompt";
 import ServiceWorkerRegister from "@/components/ui/ServiceWorkerRegister";
+import PwaSplash from "@/components/ui/PwaSplash";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -35,7 +36,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#d4382c",
+  themeColor: "#1c2428",
 };
 
 export default function RootLayout({
@@ -64,6 +65,7 @@ export default function RootLayout({
         <Providers>{children}</Providers>
         <InstallPrompt />
         <ServiceWorkerRegister />
+        <PwaSplash />
       </body>
     </html>
   );

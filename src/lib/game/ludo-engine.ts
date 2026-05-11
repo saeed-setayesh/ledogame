@@ -1,8 +1,10 @@
 export type PlayerColor = "RED" | "BLUE" | "GREEN" | "YELLOW";
+export type GameModeType = "CLASSIC" | "RUSH";
+export type RushPhase = "ROLL" | "MOVE";
 
 export interface GamePiece {
   id: number;
-  position: number; // -1 = home, 0-51 = on board, 100+ = finished
+  position: number;
   color: PlayerColor;
   isHome: boolean;
   isFinished: boolean;
@@ -12,18 +14,26 @@ export interface Player {
   id: string;
   userId: string;
   color: PlayerColor;
-  position: number; // Player order (0-3)
+  position: number;
   pieces: GamePiece[];
   hasRolled: boolean;
   canMove: boolean;
+  /** Per-player roll; in CLASSIC only the current player has a value after rolling (mirrors diceValue). */
+  diceValue: number | null;
 }
 
 export interface LudoGameState {
   players: Player[];
-  currentTurn: number; // Index of current player
+  currentTurn: number;
   diceValue: number | null;
+  gameMode: GameModeType;
+  /** RUSH only: simultaneous roll phase then ordered move phase. */
+  rushPhase?: RushPhase;
+  /** RUSH MOVE: seat i finished (moved or auto-skipped). */
+  rushRoundSeatsDone?: boolean[];
   gameStatus: "WAITING" | "ACTIVE" | "FINISHED";
   winnerId: string | null;
+  turnEndsAt: string | null;
   lastMove: {
     playerId: string;
     diceRoll: number;
@@ -33,7 +43,6 @@ export interface LudoGameState {
   } | null;
 }
 
-// Board positions for each color's path
 const COLOR_PATHS: Record<PlayerColor, number[]> = {
   RED: [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -57,16 +66,47 @@ const COLOR_PATHS: Record<PlayerColor, number[]> = {
   ],
 };
 
-// Safe positions (cannot be captured)
 const SAFE_POSITIONS = [1, 9, 14, 22, 27, 35, 40, 48];
 
-// Starting positions for each color
 const START_POSITIONS: Record<PlayerColor, number> = {
   RED: 0,
   BLUE: 13,
   GREEN: 26,
   YELLOW: 39,
 };
+
+export function normalizeGameState(raw: unknown): LudoGameState {
+  const s = raw as Partial<LudoGameState>;
+  const gameMode: GameModeType =
+    s.gameMode === "RUSH" ? "RUSH" : "CLASSIC";
+  const players = (s.players || []).map((p: Player) => ({
+    ...p,
+    diceValue:
+      typeof p.diceValue === "number" ? p.diceValue : null,
+    hasRolled: !!p.hasRolled,
+    canMove: !!p.canMove,
+  }));
+  return {
+    players,
+    currentTurn: typeof s.currentTurn === "number" ? s.currentTurn : 0,
+    diceValue:
+      s.diceValue !== undefined && s.diceValue !== null ? s.diceValue : null,
+    gameMode,
+    rushPhase:
+      gameMode === "RUSH"
+        ? s.rushPhase === "MOVE"
+          ? "MOVE"
+          : "ROLL"
+        : undefined,
+    rushRoundSeatsDone: Array.isArray(s.rushRoundSeatsDone)
+      ? s.rushRoundSeatsDone
+      : undefined,
+    gameStatus: s.gameStatus === "FINISHED" ? "FINISHED" : s.gameStatus === "WAITING" ? "WAITING" : "ACTIVE",
+    winnerId: s.winnerId ?? null,
+    turnEndsAt: s.turnEndsAt ?? null,
+    lastMove: s.lastMove ?? null,
+  };
+}
 
 export class LudoEngine {
   private state: LudoGameState;
@@ -77,9 +117,18 @@ export class LudoEngine {
       userId: string;
       color: PlayerColor;
       position: number;
-    }[]
+    }[],
+    gameMode: GameModeType = "CLASSIC"
   ) {
-    this.state = this.initializeGame(players);
+    this.state = this.initializeGame(players, gameMode);
+  }
+
+  setState(state: LudoGameState): void {
+    this.state = normalizeGameState(state);
+  }
+
+  getState(): LudoGameState {
+    return JSON.parse(JSON.stringify(this.state));
   }
 
   private initializeGame(
@@ -88,7 +137,8 @@ export class LudoEngine {
       userId: string;
       color: PlayerColor;
       position: number;
-    }[]
+    }[],
+    gameMode: GameModeType
   ): LudoGameState {
     const gamePlayers: Player[] = players.map((p) => ({
       id: p.id,
@@ -97,73 +147,118 @@ export class LudoEngine {
       position: p.position,
       pieces: Array.from({ length: 4 }, (_, i) => ({
         id: i,
-        position: -1, // -1 means in home
+        position: -1,
         color: p.color,
         isHome: true,
         isFinished: false,
       })),
       hasRolled: false,
       canMove: false,
+      diceValue: null,
     }));
 
     return {
       players: gamePlayers,
       currentTurn: 0,
       diceValue: null,
+      gameMode,
+      rushPhase: gameMode === "RUSH" ? "ROLL" : undefined,
+      rushRoundSeatsDone: undefined,
       gameStatus: "ACTIVE",
       winnerId: null,
+      turnEndsAt: null,
       lastMove: null,
     };
   }
 
-  getState(): LudoGameState {
-    return JSON.parse(JSON.stringify(this.state));
-  }
-
   rollDice(playerId: string): number {
     const player = this.state.players.find((p) => p.id === playerId);
-    if (!player) {
-      throw new Error("Player not found");
+    if (!player) throw new Error("Player not found");
+    if (player.hasRolled) throw new Error("You have already rolled the dice");
+
+    if (this.state.gameMode === "RUSH") {
+      if (this.state.rushPhase !== "ROLL") {
+        throw new Error("Not in roll phase");
+      }
+      const diceValue = Math.floor(Math.random() * 6) + 1;
+      player.diceValue = diceValue;
+      player.hasRolled = true;
+      player.canMove = this.canPlayerMove(player, diceValue);
+      this.state.diceValue = null;
+
+      const allRolled = this.state.players.every((p) => p.hasRolled);
+      if (allRolled) {
+        this.enterRushMovePhase();
+      }
+      return diceValue;
     }
 
     const currentPlayer = this.state.players[this.state.currentTurn];
-    if (currentPlayer.id !== playerId) {
-      throw new Error("Not your turn");
-    }
+    if (currentPlayer.id !== playerId) throw new Error("Not your turn");
 
-    if (player.hasRolled) {
-      throw new Error("You have already rolled the dice");
-    }
-
-    // Roll dice (1-6)
     const diceValue = Math.floor(Math.random() * 6) + 1;
     this.state.diceValue = diceValue;
+    player.diceValue = diceValue;
     player.hasRolled = true;
-
-    // Check if player can move
     player.canMove = this.canPlayerMove(player, diceValue);
-
     return diceValue;
   }
 
-  private canPlayerMove(player: Player, diceValue: number): boolean {
-    // If rolled 6, can bring piece out or move
-    if (diceValue === 6) {
-      return true;
-    }
+  /** After all RUSH players rolled: ordered move phase, auto-skip seats with no legal move. */
+  private enterRushMovePhase(): void {
+    this.state.rushPhase = "MOVE";
+    this.state.rushRoundSeatsDone = this.state.players.map(() => false);
+    this.state.diceValue = null;
+    this.advanceRushMoveCursor();
+  }
 
-    // Check if any piece can move
-    return player.pieces.some((piece) => {
-      if (piece.isHome && diceValue === 6) {
-        return true;
+  /** Find next seat that must move, or finish round. */
+  private advanceRushMoveCursor(): void {
+    const n = this.state.players.length;
+    const done = this.state.rushRoundSeatsDone!;
+    for (let i = 0; i < n; i++) {
+      if (done[i]) continue;
+      const p = this.state.players[i];
+      const dv = p.diceValue;
+      if (dv === null) {
+        done[i] = true;
+        continue;
       }
+      const moves = this.getAvailableMovesWithDice(p.id, dv);
+      if (moves.length === 0) {
+        done[i] = true;
+        continue;
+      }
+      this.state.currentTurn = i;
+      return;
+    }
+    this.endRushRound();
+  }
+
+  private endRushRound(): void {
+    this.state.rushPhase = "ROLL";
+    this.state.rushRoundSeatsDone = undefined;
+    for (const p of this.state.players) {
+      p.hasRolled = false;
+      p.canMove = false;
+      p.diceValue = null;
+    }
+    this.state.diceValue = null;
+    this.state.currentTurn = 0;
+  }
+
+  private canPlayerMove(player: Player, diceValue: number): boolean {
+    if (diceValue === 6) return true;
+    return player.pieces.some((piece) => {
+      if (piece.isHome && diceValue === 6) return true;
       if (!piece.isHome && !piece.isFinished) {
-        const newPosition = this.calculateNewPosition(
-          player.color,
-          piece.position,
-          diceValue
+        return (
+          this.calculateNewPosition(
+            player.color,
+            piece.position,
+            diceValue
+          ) !== null
         );
-        return newPosition !== null;
       }
       return false;
     });
@@ -171,82 +266,87 @@ export class LudoEngine {
 
   movePiece(playerId: string, pieceId: number): boolean {
     const player = this.state.players.find((p) => p.id === playerId);
-    if (!player) {
-      throw new Error("Player not found");
+    if (!player) throw new Error("Player not found");
+
+    if (this.state.gameMode === "RUSH") {
+      if (this.state.rushPhase !== "MOVE") {
+        throw new Error("Not in move phase");
+      }
+      const current = this.state.players[this.state.currentTurn];
+      if (!current || current.id !== playerId) throw new Error("Not your turn");
+      const diceValue = player.diceValue;
+      if (diceValue === null) throw new Error("You must roll the dice first");
+
+      return this.applyMove(player, pieceId, diceValue, () => {
+        const done = this.state.rushRoundSeatsDone!;
+        done[this.state.currentTurn] = true;
+        this.advanceRushMoveCursor();
+      });
     }
 
     const currentPlayer = this.state.players[this.state.currentTurn];
-    if (currentPlayer.id !== playerId) {
-      throw new Error("Not your turn");
-    }
-
+    if (currentPlayer.id !== playerId) throw new Error("Not your turn");
     if (!player.hasRolled || !this.state.diceValue) {
       throw new Error("You must roll the dice first");
     }
-
-    const piece = player.pieces.find((p) => p.id === pieceId);
-    if (!piece) {
-      throw new Error("Piece not found");
-    }
-
     const diceValue = this.state.diceValue;
+    return this.applyMove(player, pieceId, diceValue, () => {
+      if (diceValue !== 6) {
+        this.nextTurnClassic();
+      } else {
+        player.hasRolled = false;
+        player.canMove = false;
+        player.diceValue = null;
+        this.state.diceValue = null;
+      }
+    });
+  }
+
+  private applyMove(
+    player: Player,
+    pieceId: number,
+    diceValue: number,
+    afterMove: () => void
+  ): boolean {
+    const piece = player.pieces.find((p) => p.id === pieceId);
+    if (!piece) throw new Error("Piece not found");
     const fromPosition = piece.position;
 
-    // Move piece
     if (piece.isHome && diceValue === 6) {
-      // Bring piece out
       piece.isHome = false;
       piece.position = START_POSITIONS[player.color];
     } else if (!piece.isHome && !piece.isFinished) {
-      // Move piece on board
       const newPosition = this.calculateNewPosition(
         player.color,
         piece.position,
         diceValue
       );
-      if (newPosition === null) {
-        throw new Error("Invalid move");
-      }
-
+      if (newPosition === null) throw new Error("Invalid move");
       piece.position = newPosition;
-
-      // Check if piece reached home (finished)
       if (this.isPieceFinished(player.color, newPosition)) {
         piece.isFinished = true;
-        piece.position = 100 + piece.id; // Mark as finished
+        piece.position = 100 + piece.id;
       }
     } else {
       throw new Error("Invalid move");
     }
 
-    // Check for captures
     this.checkCaptures(player, piece);
-
-    // Record move
     this.state.lastMove = {
-      playerId,
+      playerId: player.id,
       diceRoll: diceValue,
       pieceMoved: pieceId,
       fromPosition,
       toPosition: piece.position,
     };
 
-    // Check for win
     if (this.checkWin(player)) {
       this.state.gameStatus = "FINISHED";
       this.state.winnerId = player.userId;
       return true;
     }
 
-    // If rolled 6, player gets another turn
-    if (diceValue !== 6) {
-      this.nextTurn();
-    } else {
-      // Reset for another roll
-      player.hasRolled = false;
-      player.canMove = false;
-    }
-
+    afterMove();
     return false;
   }
 
@@ -255,24 +355,12 @@ export class LudoEngine {
     currentPosition: number,
     diceValue: number
   ): number | null {
-    if (currentPosition === -1) {
-      return null; // Piece is home
-    }
-
+    if (currentPosition === -1) return null;
     const path = COLOR_PATHS[color];
     const currentIndex = path.indexOf(currentPosition);
-
-    if (currentIndex === -1) {
-      return null;
-    }
-
+    if (currentIndex === -1) return null;
     const newIndex = currentIndex + diceValue;
-
-    // Check if piece would go beyond finish
-    if (newIndex >= path.length) {
-      return null;
-    }
-
+    if (newIndex >= path.length) return null;
     return path[newIndex];
   }
 
@@ -282,10 +370,8 @@ export class LudoEngine {
   }
 
   private checkCaptures(player: Player, movedPiece: GamePiece): void {
-    // Check if this piece captured any opponent pieces
     this.state.players.forEach((opponent) => {
       if (opponent.id === player.id) return;
-
       opponent.pieces.forEach((opponentPiece) => {
         if (
           !opponentPiece.isHome &&
@@ -293,7 +379,6 @@ export class LudoEngine {
           opponentPiece.position === movedPiece.position &&
           !SAFE_POSITIONS.includes(movedPiece.position)
         ) {
-          // Capture! Send piece back home
           opponentPiece.isHome = true;
           opponentPiece.position = -1;
         }
@@ -305,35 +390,66 @@ export class LudoEngine {
     return player.pieces.every((piece) => piece.isFinished);
   }
 
-  private nextTurn(): void {
+  private nextTurnClassic(): void {
     this.state.currentTurn =
       (this.state.currentTurn + 1) % this.state.players.length;
     const currentPlayer = this.state.players[this.state.currentTurn];
     currentPlayer.hasRolled = false;
     currentPlayer.canMove = false;
+    currentPlayer.diceValue = null;
     this.state.diceValue = null;
+    for (const p of this.state.players) {
+      if (p.id !== currentPlayer.id) {
+        p.diceValue = null;
+      }
+    }
   }
 
   skipTurn(): void {
+    if (this.state.gameMode === "RUSH") {
+      if (this.state.rushPhase === "MOVE") {
+        const done = this.state.rushRoundSeatsDone;
+        if (done) done[this.state.currentTurn] = true;
+        this.advanceRushMoveCursor();
+      }
+      return;
+    }
     if (this.state.diceValue === null) {
-      this.nextTurn();
+      this.nextTurnClassic();
     }
   }
 
   forceNextTurn(): void {
-    // Force advance to next turn regardless of dice value
-    this.nextTurn();
+    if (this.state.gameMode === "RUSH" && this.state.rushPhase === "MOVE") {
+      const done = this.state.rushRoundSeatsDone;
+      if (done) done[this.state.currentTurn] = true;
+      this.advanceRushMoveCursor();
+      return;
+    }
+    this.nextTurnClassic();
   }
 
   getAvailableMoves(playerId: string): number[] {
-    const player = this.state.players.find((p) => p.id === playerId);
-    if (!player || !this.state.diceValue) {
-      return [];
+    if (this.state.gameMode === "RUSH" && this.state.rushPhase === "MOVE") {
+      const p = this.state.players.find((x) => x.id === playerId);
+      if (!p || p.diceValue === null) return [];
+      if (this.state.players[this.state.currentTurn]?.id !== playerId) {
+        return [];
+      }
+      return this.getAvailableMovesWithDice(playerId, p.diceValue);
     }
+    if (!this.state.diceValue) return [];
+    if (this.state.players[this.state.currentTurn]?.id !== playerId) return [];
+    return this.getAvailableMovesWithDice(playerId, this.state.diceValue);
+  }
 
-    const diceValue = this.state.diceValue;
+  private getAvailableMovesWithDice(
+    playerId: string,
+    diceValue: number
+  ): number[] {
+    const player = this.state.players.find((p) => p.id === playerId);
+    if (!player) return [];
     const availablePieces: number[] = [];
-
     player.pieces.forEach((piece) => {
       if (piece.isHome && diceValue === 6) {
         availablePieces.push(piece.id);
@@ -343,12 +459,9 @@ export class LudoEngine {
           piece.position,
           diceValue
         );
-        if (newPosition !== null) {
-          availablePieces.push(piece.id);
-        }
+        if (newPosition !== null) availablePieces.push(piece.id);
       }
     });
-
     return availablePieces;
   }
 }

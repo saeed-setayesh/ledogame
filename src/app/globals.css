@@ -27,6 +27,14 @@
   --gold: #ffd700;
   --gold-dim: #c9963a;
   --gold-border: rgba(255,215,0,0.15);
+
+  /* In-game shell — muted, long-session friendly */
+  --game-bg-top: #141a1c;
+  --game-bg-mid: #1c2428;
+  --game-bg-bottom: #121618;
+  --game-panel: rgba(12, 16, 18, 0.92);
+  --game-bottom-bar: rgba(10, 14, 16, 0.96);
+  --board-size: min(92vw, min(100dvh - 14rem, 600px));
 }
 
 @theme inline {
@@ -96,11 +104,20 @@ button:focus-visible,
 /* Main background — dark with subtle radial glow */
 .game-bg {
   background:
-    radial-gradient(ellipse 80% 60% at 50% 20%, rgba(120,20,20,0.25) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 40% at 50% 90%, rgba(180,120,20,0.10) 0%, transparent 50%),
-    linear-gradient(180deg, #0a0506 0%, #1a0808 40%, #0a0506 100%);
+    radial-gradient(ellipse 80% 50% at 50% 15%, rgba(40, 55, 60, 0.35) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 45% at 50% 100%, rgba(25, 35, 40, 0.5) 0%, transparent 45%),
+    linear-gradient(180deg, var(--game-bg-top) 0%, var(--game-bg-mid) 45%, var(--game-bg-bottom) 100%);
   min-height: 100vh;
-  color: #fff0d6;
+  min-height: 100dvh;
+  color: #e8ecee;
+}
+
+.game-shell-bg {
+  background:
+    radial-gradient(ellipse 70% 45% at 50% 10%, rgba(50, 65, 72, 0.3) 0%, transparent 50%),
+    linear-gradient(180deg, var(--game-bg-top) 0%, var(--game-bg-mid) 50%, var(--game-bg-bottom) 100%);
+  min-height: 100dvh;
+  color: #e8ecee;
 }
 
 /* Card with gold border glow */

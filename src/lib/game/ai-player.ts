@@ -29,7 +29,28 @@ export class AIPlayer {
       throw new Error("Player not found");
     }
 
-    // If player hasn't rolled, roll the dice
+    if (gameState.gameMode === "RUSH" && gameState.rushPhase === "MOVE") {
+      const current = gameState.players[gameState.currentTurn];
+      if (current.id !== playerId) {
+        return { action: "roll" };
+      }
+      const diceValue = player.diceValue;
+      if (diceValue === null) {
+        return { action: "roll" };
+      }
+      const availableMoves = engine.getAvailableMoves(playerId);
+      if (availableMoves.length === 0) {
+        return { action: "roll" };
+      }
+      const bestPieceId = this.selectBestPiece(
+        player,
+        gameState,
+        availableMoves,
+        diceValue
+      );
+      return { action: "move", pieceId: bestPieceId };
+    }
+
     if (!player.hasRolled || !gameState.diceValue) {
       return { action: "roll" };
     }
