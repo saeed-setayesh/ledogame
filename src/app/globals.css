@@ -298,6 +298,10 @@ button:focus-visible,
 }
 .animate-float { animation: float 3s ease-in-out infinite; }
 .animate-dice-roll { animation: dice-roll 0.5s ease-in-out; }
+/* Continuous spin while dice value is settling (Dice.tsx). */
+.animate-dice-roll-infinite {
+  animation: dice-roll 0.32s linear infinite;
+}
 .animate-piece-move { animation: piece-move 0.3s ease-in-out; }
 
 /* Mobile optimizations */

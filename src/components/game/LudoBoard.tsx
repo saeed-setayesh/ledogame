@@ -52,6 +52,7 @@ export default function LudoBoard({
           player.pieces.map((piece) => (
             <GamePiece
               key={`${player.id}-${piece.id}`}
+              pieceId={piece.id}
               color={player.color}
               position={piece.position}
               isHome={piece.isHome}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 
@@ -8,6 +8,7 @@ interface DiceProps {
   value: number | null;
   onRoll?: () => void;
   disabled?: boolean;
+  /** External trigger (optional); local click also starts a roll. */
   rolling?: boolean;
   variant?: "lacquer" | "white";
   /** Smaller dice in a row (e.g. Rush). */
@@ -19,29 +20,82 @@ export default function Dice({
   value,
   onRoll,
   disabled,
-  rolling,
   compact,
   label,
 }: DiceProps) {
   const [displayValue, setDisplayValue] = useState<number | null>(value);
   const [isRolling, setIsRolling] = useState(false);
+  const prevValueRef = useRef<number | null | undefined>(undefined);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const safetyRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSpinTimers = useCallback(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (settleRef.current) clearTimeout(settleRef.current);
+    if (safetyRef.current) clearTimeout(safetyRef.current);
+    intervalRef.current = null;
+    settleRef.current = null;
+    safetyRef.current = null;
+  }, []);
+
+  const startSpinFaces = useCallback(() => {
+    clearSpinTimers();
+    setIsRolling(true);
+    intervalRef.current = setInterval(() => {
+      setDisplayValue(Math.floor(Math.random() * 6) + 1);
+    }, 85);
+    safetyRef.current = setTimeout(() => {
+      if (!intervalRef.current) return;
+      clearSpinTimers();
+      setIsRolling(false);
+      setDisplayValue(value ?? null);
+    }, 2800);
+  }, [clearSpinTimers, value]);
+
+  const finishSpin = useCallback(
+    (finalFace: number | null) => {
+      clearSpinTimers();
+      setIsRolling(false);
+      setDisplayValue(finalFace);
+    },
+    [clearSpinTimers]
+  );
 
   useEffect(() => {
-    if (rolling) {
-      setIsRolling(true);
-      const interval = setInterval(() => {
-        setDisplayValue(Math.floor(Math.random() * 6) + 1);
-      }, 100);
-
-      setTimeout(() => {
-        clearInterval(interval);
-        setIsRolling(false);
-        setDisplayValue(value ?? null);
-      }, 1000);
-    } else {
+    const prev = prevValueRef.current;
+    prevValueRef.current = value;
+    if (prev === undefined) {
       setDisplayValue(value ?? null);
+      return;
     }
-  }, [value, rolling]);
+    if (value === prev) return;
+
+    if (value === null) {
+      clearSpinTimers();
+      setIsRolling(false);
+      setDisplayValue(null);
+      return;
+    }
+
+    clearSpinTimers();
+    setIsRolling(true);
+    intervalRef.current = setInterval(() => {
+      setDisplayValue(Math.floor(Math.random() * 6) + 1);
+    }, 85);
+    settleRef.current = setTimeout(() => {
+      finishSpin(value);
+    }, 720);
+    return clearSpinTimers;
+  }, [value, clearSpinTimers, finishSpin]);
+
+  useEffect(() => () => clearSpinTimers(), [clearSpinTimers]);
+
+  const handleRollClick = () => {
+    if (!onRoll || disabled || isRolling) return;
+    startSpinFaces();
+    onRoll();
+  };
 
   const face =
     displayValue != null
@@ -63,8 +117,8 @@ export default function Dice({
           width={imgSize}
           height={imgSize}
           className={cn(
-            "object-contain select-none",
-            isRolling && "animate-pulse"
+            "object-contain select-none will-change-transform",
+            isRolling && "animate-dice-roll-infinite"
           )}
           unoptimized
         />
@@ -73,11 +127,6 @@ export default function Dice({
           className="rounded-lg bg-gradient-to-b from-gray-200 to-gray-400 opacity-70"
           style={{ width: imgSize * 0.85, height: imgSize * 0.85 }}
         />
-      )}
-      {isRolling && (
-        <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-white/70">
-          <span className="text-[10px] font-bold text-gray-700">…</span>
-        </div>
       )}
     </div>
   );
@@ -92,7 +141,7 @@ export default function Dice({
         )}
         <button
           type="button"
-          onClick={onRoll}
+          onClick={handleRollClick}
           disabled={disabled || isRolling}
           className={cn(
             "transition-all duration-300",
