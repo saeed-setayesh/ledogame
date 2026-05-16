@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma"
-import { createWallet, getUSDTBalance, transferUSDT, validateAddress } from "./tron"
+import { createWallet, getUSDTBalance, transferUSDT } from "./tron"
+import { validateBep20Address } from "./bep20"
 import { Decimal } from "@prisma/client/runtime/library"
 
 export async function createUserWallet(userId: string): Promise<string> {
@@ -38,6 +39,14 @@ export async function syncWalletBalance(userId: string): Promise<number> {
   if (!user?.walletAddress) {
     await createUserWallet(userId)
     return 0
+  }
+
+  if (user.walletAddress.startsWith("0x")) {
+    const row = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { walletBalance: true },
+    })
+    return row ? parseFloat(row.walletBalance.toString()) : 0
   }
 
   const balance = await getUSDTBalance(user.walletAddress)
@@ -84,8 +93,8 @@ export async function processWithdrawal(
   amount: number
 ): Promise<string> {
   // Validate address
-  if (!(await validateAddress(toAddress))) {
-    throw new Error("Invalid TRON address")
+  if (!validateBep20Address(toAddress)) {
+    throw new Error("Invalid BEP20 address (use 0x… on BNB Smart Chain)")
   }
 
   const user = await prisma.user.findUnique({

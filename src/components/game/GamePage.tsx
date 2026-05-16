@@ -15,6 +15,7 @@ import {
 } from "@/lib/game/ludo-engine";
 import { AIPlayer } from "@/lib/game/ai-player";
 import Image from "next/image";
+import { Trophy, Package } from "lucide-react";
 
 interface GamePageProps {
   game: any;
@@ -390,8 +391,9 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
     gameState.players.some((p) => p.userId.startsWith("AI_")) &&
     gameState.players.length === 2;
 
-  const leftPlayers = gameState.players.slice(0, 2);
-  const rightPlayers = gameState.players.slice(2, 4);
+  const midSeat = Math.ceil(gameState.players.length / 2);
+  const topPlayersList = gameState.players.slice(0, midSeat);
+  const bottomPlayersList = gameState.players.slice(midSeat);
 
   let turnHint = "";
   if (gameState.gameMode === "RUSH" && gameState.rushPhase === "ROLL") {
@@ -432,72 +434,95 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
 
   return (
     <div className="game-shell-bg min-h-dvh relative flex flex-col overflow-hidden pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)]">
-      <header className="relative z-40 flex items-center justify-between px-2 pt-2 max-w-3xl mx-auto w-full">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <button
-              type="button"
-              className="min-h-12 min-w-12 flex items-center justify-center rounded-xl bg-black/30 border border-white/10"
-              aria-label="Settings"
-            >
-              <Image
-                src="/game/icons/settings.png"
-                alt=""
-                width={28}
-                height={28}
-                className="opacity-90"
-                unoptimized
-              />
-            </button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content
-              className="z-50 min-w-[180px] rounded-lg p-1 bg-zinc-900 border border-white/10 text-white text-sm shadow-xl"
-              sideOffset={6}
-            >
-              <DropdownMenu.Item className="px-3 py-2 rounded cursor-default outline-none hover:bg-white/10">
-                Sound (coming soon)
-              </DropdownMenu.Item>
-              {isPracticeMode && (
-                <DropdownMenu.Item className="px-3 py-2 rounded cursor-default outline-none text-white/60">
-                  Practice mode
-                </DropdownMenu.Item>
-              )}
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-
-        <Image
-          src="/game/logo.png"
-          alt="Ledo"
-          width={120}
-          height={40}
-          className="h-9 w-auto object-contain opacity-95"
-          unoptimized
-        />
-
-        <div className="w-12" />
-      </header>
-
-      <div className="fixed left-2 top-1/2 -translate-y-1/2 z-40 flex flex-col gap-2">
+      <header className="relative z-40 flex items-center justify-between gap-2 px-2 pt-2 max-w-3xl mx-auto w-full">
         <button
           type="button"
           onClick={handleExitGame}
           disabled={isLeaving}
-          className="min-h-12 min-w-12 flex items-center justify-center rounded-xl bg-black/35 border border-white/12"
+          className="min-h-11 min-w-11 shrink-0 flex items-center justify-center rounded-lg bg-gradient-to-b from-red-500 to-red-800 border border-red-950/40 shadow-md"
+          aria-label="Exit game"
           title="Exit"
         >
-          <Image src="/game/icons/exit.png" alt="" width={26} height={26} unoptimized />
+          <Image src="/game/icons/exit.png" alt="" width={22} height={22} unoptimized />
         </button>
-        <button
-          type="button"
-          onClick={goLobby}
-          className="min-h-12 min-w-12 flex items-center justify-center rounded-xl bg-black/35 border border-white/12"
-          title="Lobby"
+
+        <div
+          className="flex-1 flex justify-center min-w-0 px-1"
+          style={{
+            filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.35))",
+          }}
         >
-          <Image src="/game/icons/lobby.png" alt="" width={26} height={26} unoptimized />
-        </button>
-      </div>
+          <div
+            className="flex items-center justify-center px-6 py-2 rounded-xl max-w-[220px] w-full"
+            style={{
+              background:
+                "linear-gradient(180deg, #7a5230 0%, #4a3018 45%, #2f1e10 100%)",
+              border: "2px solid #3d2814",
+              boxShadow:
+                "inset 0 1px 0 rgba(255,255,255,0.12), 0 2px 0 rgba(0,0,0,0.4)",
+            }}
+          >
+            <Image
+              src="/game/logo.png"
+              alt="LUDINO"
+              width={140}
+              height={44}
+              className="h-8 w-auto object-contain brightness-110 contrast-105"
+              unoptimized
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                className="min-h-11 min-w-11 flex items-center justify-center rounded-lg bg-black/35 border border-white/12"
+                aria-label="Settings"
+              >
+                <Image
+                  src="/game/icons/settings.png"
+                  alt=""
+                  width={24}
+                  height={24}
+                  className="opacity-90"
+                  unoptimized
+                />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                className="z-50 min-w-[180px] rounded-lg p-1 bg-zinc-900 border border-white/10 text-white text-sm shadow-xl"
+                sideOffset={6}
+              >
+                <DropdownMenu.Item
+                  className="px-3 py-2 rounded cursor-default outline-none hover:bg-white/10"
+                  onSelect={goLobby}
+                >
+                  Lobby
+                </DropdownMenu.Item>
+                <DropdownMenu.Item className="px-3 py-2 rounded cursor-default outline-none hover:bg-white/10">
+                  Sound (coming soon)
+                </DropdownMenu.Item>
+                {isPracticeMode && (
+                  <DropdownMenu.Item className="px-3 py-2 rounded cursor-default outline-none text-white/60">
+                    Practice mode
+                  </DropdownMenu.Item>
+                )}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+          <button
+            type="button"
+            onClick={goLobby}
+            className="min-h-11 px-3 flex items-center justify-center rounded-lg bg-gradient-to-b from-amber-400 to-amber-700 border border-amber-950/30 text-xs font-bold text-amber-950 shadow"
+            title="Lobby"
+          >
+            <Image src="/game/icons/lobby.png" alt="" width={22} height={22} unoptimized />
+          </button>
+        </div>
+      </header>
 
       <GameNotification
         message="No moves available - Turn will skip"
@@ -507,17 +532,19 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
         onClose={() => setShowNoMovesNotification(false)}
       />
 
-      <p className="text-center text-xs text-white/55 px-4 py-1">{turnHint}</p>
+      <p className="text-center text-xs text-white/55 px-4 py-1 shrink-0">
+        {turnHint}
+      </p>
 
-      <div className="flex-1 flex items-center justify-center gap-1 md:gap-3 px-1 md:px-3">
-        <div className="hidden sm:flex flex-col gap-2 w-[9.5rem] shrink-0">
-          {leftPlayers.map((player) => (
+      <div className="flex-1 flex flex-col min-h-0 items-stretch justify-center gap-1 px-1 md:px-3 max-w-3xl mx-auto w-full">
+        <div className="flex justify-center gap-2 flex-wrap w-full py-1">
+          {topPlayersList.map((player) => (
             <PlayerCard
               key={player.userId}
               player={player}
-              isTimerActive={
-                playerTimerActive(gameState.players.indexOf(player))
-              }
+              isTimerActive={playerTimerActive(
+                gameState.players.indexOf(player)
+              )}
               isMe={player.userId === currentUserId}
               game={game}
               gameState={gameState}
@@ -527,32 +554,37 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
         </div>
 
         <div
-          className="relative rounded-2xl p-2 md:p-3 shrink-0"
-          style={{
-            background:
-              "linear-gradient(180deg, rgba(60,50,35,0.9) 0%, rgba(35,28,20,0.95) 100%)",
-            boxShadow:
-              "0 0 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06)",
-            border: "2px solid rgba(255,255,255,0.08)",
-          }}
+          className="flex-1 flex items-center justify-center min-h-0 py-1"
+          style={{ minHeight: "min(72vw, 64dvh)" }}
         >
-          <LudoBoard
-            gameState={gameState}
-            currentUserId={currentUserId}
-            onMovePiece={handleMovePiece}
-            availableMoves={availableMoves}
-            isMyTurn={myMoveTurn}
-          />
+          <div
+            className="relative w-full flex items-center justify-center p-2 md:p-3 rounded-3xl shrink-0"
+            style={{
+              background:
+                "linear-gradient(145deg, #6b4a2c 0%, #3d2814 40%, #26180c 100%)",
+              boxShadow:
+                "0 12px 40px rgba(0,0,0,0.55), inset 0 2px 0 rgba(255,255,255,0.1)",
+              border: "3px solid #1f140a",
+            }}
+          >
+            <LudoBoard
+              gameState={gameState}
+              currentUserId={currentUserId}
+              onMovePiece={handleMovePiece}
+              availableMoves={availableMoves}
+              isMyTurn={myMoveTurn}
+            />
+          </div>
         </div>
 
-        <div className="hidden sm:flex flex-col gap-2 w-[9.5rem] shrink-0">
-          {rightPlayers.map((player) => (
+        <div className="flex justify-center gap-2 flex-wrap w-full py-1">
+          {bottomPlayersList.map((player) => (
             <PlayerCard
               key={player.userId}
               player={player}
-              isTimerActive={
-                playerTimerActive(gameState.players.indexOf(player))
-              }
+              isTimerActive={playerTimerActive(
+                gameState.players.indexOf(player)
+              )}
               isMe={player.userId === currentUserId}
               game={game}
               gameState={gameState}
@@ -562,43 +594,36 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
         </div>
       </div>
 
-      <div className="sm:hidden flex justify-center gap-1.5 px-2 pb-1 flex-wrap">
-        {gameState.players.slice(0, 4).map((player) => (
-          <PlayerCard
-            key={player.userId}
-            player={player}
-            isTimerActive={
-              playerTimerActive(gameState.players.indexOf(player))
-            }
-            isMe={player.userId === currentUserId}
-            game={game}
-            gameState={gameState}
-            localVideo={localVideo}
-          />
-        ))}
-      </div>
-
       <div
         className="fixed bottom-0 left-0 right-0 z-30 flex items-end justify-between gap-2 px-2 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] border-t border-white/8"
         style={{ background: "var(--game-bottom-bar)" }}
       >
-        <div className="flex flex-col gap-2 shrink-0 max-w-[40%]">
+        <div className="flex flex-col gap-2 shrink-0 max-w-[38%]">
           <div
             className="text-[10px] md:text-xs text-white/70 leading-tight px-2 py-1.5 rounded-lg bg-black/25 border border-white/6 select-none"
             title="Prize pool"
           >
             {potLabel}
           </div>
+          <div className="flex items-center gap-2 px-1">
+            <div
+              className="h-11 w-11 rounded-xl bg-black/30 border border-white/10 flex items-center justify-center"
+              title="Trophy"
+            >
+              <Trophy className="w-6 h-6 text-amber-300" />
+            </div>
+            <div
+              className="h-11 w-11 rounded-xl bg-black/30 border border-white/10 flex items-center justify-center"
+              title="Vault"
+            >
+              <Package className="w-6 h-6 text-amber-700" strokeWidth={1.75} />
+            </div>
+          </div>
           <ScreenRecorder gameId={game.id} iconSrc="/game/icons/record.png" />
         </div>
 
         <div className="flex-1 flex justify-center items-end overflow-x-auto">
-          <div
-            className="flex items-end justify-center gap-2 md:gap-3 px-3 py-2 rounded-2xl bg-white/10 border border-white/10"
-            style={{
-              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06)",
-            }}
-          >
+          <div className="flex items-end justify-center gap-2 md:gap-3 px-2 py-1">
             {gameState.gameMode === "RUSH" ? (
               gameState.players.map((p, i) => (
                 <Dice
@@ -626,6 +651,7 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
               ))
             ) : (
               <Dice
+                ludino
                 value={gameState.diceValue}
                 onRoll={
                   myRollTurn && !currentPlayer?.hasRolled
@@ -638,7 +664,19 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
           </div>
         </div>
 
-        <div className="shrink-0 flex items-center">
+        <div className="shrink-0 flex flex-col items-end gap-2">
+          <div
+            className="rounded-xl bg-white/95 border border-black/10 px-3 py-2 shadow-md min-w-[5.5rem]"
+            style={{ color: "#222" }}
+          >
+            <div className="text-[10px] font-extrabold tracking-wide text-black/80 uppercase">
+              Live
+            </div>
+            <div className="flex items-center gap-1.5 text-sm font-bold tabular-nums">
+              <span className="inline-block w-2 h-2 rounded-full bg-red-600 animate-pulse" />
+              {gameState.diceValue ?? "—"}
+            </div>
+          </div>
           <VideoCall
             gameId={game.id}
             userId={currentUserId}

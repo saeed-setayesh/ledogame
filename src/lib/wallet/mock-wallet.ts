@@ -1,6 +1,6 @@
 /**
  * Mock wallet service for development/testing
- * Generates fake TRON addresses, transaction hashes, and simulates wallet operations
+ * Generates fake BEP20 (BNB Smart Chain) addresses, tx hashes, and simulates wallet operations
  */
 
 export interface MockTransaction {
@@ -13,15 +13,15 @@ export interface MockTransaction {
 }
 
 /**
- * Generate a fake TRON address (T-prefixed, 34 characters)
+ * Generate a fake BEP20 address (0x + 40 hex chars)
  */
 export function generateMockAddress(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  let address = "T";
-  for (let i = 0; i < 33; i++) {
-    address += chars.charAt(Math.floor(Math.random() * chars.length));
+  const chars = "0123456789abcdef";
+  let hex = "";
+  for (let i = 0; i < 40; i++) {
+    hex += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return address;
+  return `0x${hex}`;
 }
 
 /**

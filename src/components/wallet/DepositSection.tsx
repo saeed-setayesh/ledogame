@@ -76,7 +76,7 @@ export default function DepositSection({
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-2 text-foreground/70">
-            Your TRON Address
+            Your USDT deposit address (BEP20 — BNB Smart Chain)
           </label>
           <div className="flex gap-2">
             <input
@@ -148,7 +148,7 @@ export default function DepositSection({
             </button>
           </div>
           <p className="text-xs text-foreground/50 mt-2">
-            This is a mock deposit for testing. In production, send USDT to the
+            This is a mock deposit for testing. In production, send BEP20 USDT to the
             address above.
           </p>
         </div>

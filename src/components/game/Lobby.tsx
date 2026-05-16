@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import PracticeModeModal from "./PracticeModeModal";
@@ -32,6 +32,24 @@ export default function Lobby({ userId }: LobbyProps) {
   const [showPracticeModal, setShowPracticeModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [entryFees, setEntryFees] = useState([1, 2, 3, 5, 10]);
+
+  const maxPlayerChoices = useMemo(
+    () => Array.from({ length: 11 }, (_, i) => i + 2),
+    []
+  );
+  const playersPerTeamChoices = useMemo(
+    () => Array.from({ length: 6 }, (_, i) => i + 1),
+    []
+  );
+  const aiMax = Math.max(0, maxPlayers - 1);
+  const aiChoices = useMemo(
+    () => Array.from({ length: aiMax + 1 }, (_, i) => i),
+    [aiMax]
+  );
+
+  useEffect(() => {
+    setAiPlayers((a) => Math.min(a, Math.max(0, maxPlayers - 1)));
+  }, [maxPlayers]);
 
   // Fetch allowed entry fees from admin settings
   useEffect(() => {
@@ -242,20 +260,28 @@ export default function Lobby({ userId }: LobbyProps) {
 
             {/* Max Players */}
             <div>
-              <label className="block text-sm font-medium mb-3">
-                Max Players: {maxPlayers}
-              </label>
-              <input
-                type="range"
-                min="2"
-                max="12"
-                value={maxPlayers}
-                onChange={(e) => setMaxPlayers(parseInt(e.target.value))}
-                className="w-full"
-              />
-              <div className="flex justify-between text-xs text-foreground/70 mt-1">
-                <span>2</span>
-                <span>12</span>
+              <div className="flex items-center gap-2 mb-4">
+                <Users className="w-5 h-5 text-primary" />
+                <label className="block text-lg font-semibold">
+                  Max Players ({maxPlayers})
+                </label>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 md:gap-3">
+                {maxPlayerChoices.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setMaxPlayers(n)}
+                    className={cn(
+                      "p-3 md:p-4 rounded-lg border-2 font-bold text-lg transition-all min-h-[44px]",
+                      maxPlayers === n
+                        ? "border-primary bg-gradient-to-br from-primary to-primary-dark text-white shadow-lg scale-105"
+                        : "border-border hover:border-primary/50 bg-background"
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -275,17 +301,22 @@ export default function Lobby({ userId }: LobbyProps) {
                   </span>
                 </div>
               </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="6"
-                  value={playersPerTeam}
-                  onChange={(e) => setPlayersPerTeam(parseInt(e.target.value))}
-                className="w-full h-2 bg-background rounded-lg appearance-none cursor-pointer accent-primary"
-                />
-              <div className="flex justify-between text-xs text-foreground/70 mt-2">
-                <span>1</span>
-                <span>6</span>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 md:gap-3">
+                {playersPerTeamChoices.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setPlayersPerTeam(n)}
+                    className={cn(
+                      "p-3 md:p-4 rounded-lg border-2 font-bold text-lg transition-all min-h-[44px]",
+                      playersPerTeam === n
+                        ? "border-primary bg-gradient-to-br from-primary to-primary-dark text-white shadow-lg scale-105"
+                        : "border-border hover:border-primary/50 bg-background"
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
               </div>
               </div>
             )}
@@ -324,20 +355,32 @@ export default function Lobby({ userId }: LobbyProps) {
 
             {/* AI Players */}
             <div>
-              <label className="block text-sm font-medium mb-3">
-                AI Players: {aiPlayers}
-              </label>
-              <input
-                type="range"
-                min="0"
-                max={Math.max(0, maxPlayers - 1)}
-                value={aiPlayers}
-                onChange={(e) => setAiPlayers(parseInt(e.target.value))}
-                className="w-full"
-              />
-              <div className="flex justify-between text-xs text-foreground/70 mt-1">
-                <span>0 (Human Only)</span>
-                <span>{Math.max(0, maxPlayers - 1)}</span>
+              <div className="flex items-center gap-2 mb-4">
+                <Bot className="w-5 h-5 text-primary" />
+                <label className="block text-lg font-semibold">
+                  AI Players ({aiPlayers})
+                </label>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 md:gap-3">
+                {aiChoices.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setAiPlayers(n)}
+                    className={cn(
+                      "p-3 md:p-4 rounded-lg border-2 font-bold text-lg transition-all min-h-[44px]",
+                      aiPlayers === n
+                        ? "border-primary bg-gradient-to-br from-primary to-primary-dark text-white shadow-lg scale-105"
+                        : "border-border hover:border-primary/50 bg-background"
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <div className="flex justify-between text-xs text-foreground/70 mt-2">
+                <span>0 = human only</span>
+                <span>max {aiMax}</span>
               </div>
               {aiPlayers > 0 ? (
                 <p className="text-xs text-foreground/60 mt-2">

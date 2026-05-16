@@ -141,7 +141,7 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2 text-foreground/70">
-              TRON Address
+              BEP20 address (BNB Smart Chain)
             </label>
             <input
               type="text"
@@ -151,7 +151,7 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
                 setWithdrawError(null);
               }}
               className="w-full px-4 py-2 bg-background border border-border rounded-lg min-h-[44px] focus:outline-none focus:ring-2 focus:ring-primary/50"
-              placeholder="T..."
+              placeholder="0x…"
             />
           </div>
           <div>
