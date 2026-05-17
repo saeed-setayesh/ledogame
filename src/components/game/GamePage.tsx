@@ -15,7 +15,7 @@ import {
 } from "@/lib/game/ludo-engine";
 import { AIPlayer } from "@/lib/game/ai-player";
 import Image from "next/image";
-import { Trophy, Package } from "lucide-react";
+import Link from "next/link";
 
 interface GamePageProps {
   game: any;
@@ -433,96 +433,104 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   };
 
   return (
-    <div className="game-shell-bg min-h-dvh relative flex flex-col overflow-hidden pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)]">
-      <header className="relative z-40 flex items-center justify-between gap-2 px-2 pt-2 max-w-3xl mx-auto w-full">
-        <button
-          type="button"
-          onClick={handleExitGame}
-          disabled={isLeaving}
-          className="min-h-11 min-w-11 shrink-0 flex items-center justify-center rounded-lg bg-gradient-to-b from-red-500 to-red-800 border border-red-950/40 shadow-md"
-          aria-label="Exit game"
-          title="Exit"
-        >
-          <Image src="/game/icons/exit.png" alt="" width={22} height={22} unoptimized />
-        </button>
+    <div className="game-shell-bg min-h-dvh relative flex flex-col overflow-hidden pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)]">
 
-        <div
-          className="flex-1 flex justify-center min-w-0 px-1"
-          style={{
-            filter: "drop-shadow(0 4px 12px rgba(0,0,0,0.35))",
-          }}
-        >
-          <div
-            className="flex items-center justify-center px-6 py-2 rounded-xl max-w-[220px] w-full"
-            style={{
-              background:
-                "linear-gradient(180deg, #7a5230 0%, #4a3018 45%, #2f1e10 100%)",
-              border: "2px solid #3d2814",
-              boxShadow:
-                "inset 0 1px 0 rgba(255,255,255,0.12), 0 2px 0 rgba(0,0,0,0.4)",
-            }}
+      {/* ── Header (no duplicate / floating icons) ── */}
+      <header className="relative z-40 flex items-center justify-between gap-1.5 px-2 pt-2 pb-1 max-w-3xl mx-auto w-full">
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={handleExitGame}
+            disabled={isLeaving}
+            className="w-10 h-10 flex items-center justify-center rounded-xl bg-black/45 border border-white/12 active:scale-95 transition-transform text-white/85"
+            aria-label="Exit"
           >
-            <Image
-              src="/game/logo.png"
-              alt="LUDINO"
-              width={140}
-              height={44}
-              className="h-8 w-auto object-contain brightness-110 contrast-105"
-              unoptimized
-            />
-          </div>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M15 17l-5-5 5-5" />
+              <path d="M21 12H10" />
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="w-10 h-10 flex items-center justify-center rounded-xl bg-black/45 border border-white/12 active:scale-95 transition-transform"
+            aria-label="Rewards"
+          >
+            <Image src="/game/icons/key.png" alt="" width={30} height={30} unoptimized />
+          </button>
+          <button
+            type="button"
+            className="w-10 h-10 flex items-center justify-center rounded-xl bg-black/45 border border-white/12 active:scale-95 transition-transform"
+            aria-label="Achievements"
+          >
+            <Image src="/game/icons/star.png" alt="" width={28} height={28} unoptimized />
+          </button>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex-1 flex justify-center min-w-0 px-0.5">
+          <Image
+            src="/game/logo.png"
+            alt="LUDINO"
+            width={480}
+            height={180}
+            className="h-[5.75rem] sm:h-28 md:h-32 lg:h-36 w-auto max-w-[min(92vw,28rem)] object-contain drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)]"
+            unoptimized
+            priority
+          />
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <button
                 type="button"
-                className="min-h-11 min-w-11 flex items-center justify-center rounded-lg bg-black/35 border border-white/12"
-                aria-label="Settings"
+                className="w-10 h-10 flex items-center justify-center rounded-xl bg-black/45 border border-white/12 active:scale-95 transition-transform text-[#e8b84a]"
+                aria-label="Menu"
               >
-                <Image
-                  src="/game/icons/settings.png"
-                  alt=""
-                  width={24}
-                  height={24}
-                  className="opacity-90"
-                  unoptimized
-                />
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .55.22 1.05.59 1.41.37.37.86.59 1.41.59H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content
-                className="z-50 min-w-[180px] rounded-lg p-1 bg-zinc-900 border border-white/10 text-white text-sm shadow-xl"
+                className="z-50 min-w-[170px] rounded-xl p-1.5 bg-zinc-900/95 border border-white/10 text-white text-sm shadow-2xl backdrop-blur-sm"
                 sideOffset={6}
               >
+                <DropdownMenu.Item asChild>
+                  <Link
+                    href="/wallet"
+                    className="px-3 py-2 rounded-lg outline-none hover:bg-white/10 flex items-center gap-2 cursor-pointer"
+                  >
+                    <Image src="/game/icons/coin.png" alt="" width={18} height={18} unoptimized className="opacity-90" />
+                    Wallet &amp; coins
+                  </Link>
+                </DropdownMenu.Item>
                 <DropdownMenu.Item
-                  className="px-3 py-2 rounded cursor-default outline-none hover:bg-white/10"
+                  className="px-3 py-2 rounded-lg cursor-default outline-none hover:bg-white/10"
                   onSelect={goLobby}
                 >
                   Lobby
                 </DropdownMenu.Item>
-                <DropdownMenu.Item className="px-3 py-2 rounded cursor-default outline-none hover:bg-white/10">
+                <DropdownMenu.Item className="px-3 py-2 rounded-lg cursor-default outline-none hover:bg-white/10">
                   Sound (coming soon)
                 </DropdownMenu.Item>
                 {isPracticeMode && (
-                  <DropdownMenu.Item className="px-3 py-2 rounded cursor-default outline-none text-white/60">
+                  <DropdownMenu.Item className="px-3 py-2 rounded-lg cursor-default outline-none text-white/50">
                     Practice mode
                   </DropdownMenu.Item>
                 )}
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
-          <button
-            type="button"
-            onClick={goLobby}
-            className="min-h-11 px-3 flex items-center justify-center rounded-lg bg-gradient-to-b from-amber-400 to-amber-700 border border-amber-950/30 text-xs font-bold text-amber-950 shadow"
-            title="Lobby"
-          >
-            <Image src="/game/icons/lobby.png" alt="" width={22} height={22} unoptimized />
-          </button>
         </div>
       </header>
+
+      {/* ── Turn hint ── */}
+      <p className="text-center text-xs font-semibold text-white/70 tracking-wide px-4 py-1 shrink-0">
+        {turnHint}
+      </p>
 
       <GameNotification
         message="No moves available - Turn will skip"
@@ -532,100 +540,70 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
         onClose={() => setShowNoMovesNotification(false)}
       />
 
-      <p className="text-center text-xs text-white/55 px-4 py-1 shrink-0">
-        {turnHint}
-      </p>
+      {/* ── Main area: players + board ── */}
+      <div className="flex-1 flex flex-col min-h-0 items-center justify-center gap-2 px-2 max-w-3xl mx-auto w-full">
 
-      <div className="flex-1 flex flex-col min-h-0 items-stretch justify-center gap-1 px-1 md:px-3 max-w-3xl mx-auto w-full">
-        <div className="flex justify-center gap-2 flex-wrap w-full py-1">
-          {topPlayersList.map((player) => (
-            <PlayerCard
-              key={player.userId}
-              player={player}
-              isTimerActive={playerTimerActive(
-                gameState.players.indexOf(player)
-              )}
-              isMe={player.userId === currentUserId}
-              game={game}
-              gameState={gameState}
-              localVideo={localVideo}
-            />
-          ))}
-        </div>
-
-        <div
-          className="flex-1 flex items-center justify-center min-h-0 py-1"
-          style={{ minHeight: "min(72vw, 64dvh)" }}
-        >
-          <div
-            className="relative w-full flex items-center justify-center p-2 md:p-3 rounded-3xl shrink-0"
-            style={{
-              background:
-                "linear-gradient(145deg, #6b4a2c 0%, #3d2814 40%, #26180c 100%)",
-              boxShadow:
-                "0 12px 40px rgba(0,0,0,0.55), inset 0 2px 0 rgba(255,255,255,0.1)",
-              border: "3px solid #1f140a",
-            }}
-          >
-            <LudoBoard
-              gameState={gameState}
-              currentUserId={currentUserId}
-              onMovePiece={handleMovePiece}
-              availableMoves={availableMoves}
-              isMyTurn={myMoveTurn}
-            />
+        {topPlayersList.length > 0 && (
+          <div className="flex justify-center gap-2 flex-wrap w-full">
+            {topPlayersList.map((player) => (
+              <PlayerCard
+                key={player.userId}
+                player={player}
+                isTimerActive={playerTimerActive(gameState.players.indexOf(player))}
+                isMe={player.userId === currentUserId}
+                game={game}
+                gameState={gameState}
+                localVideo={localVideo}
+              />
+            ))}
           </div>
+        )}
+
+        <div className="flex items-center justify-center w-full">
+          <LudoBoard
+            gameState={gameState}
+            currentUserId={currentUserId}
+            onMovePiece={handleMovePiece}
+            availableMoves={availableMoves}
+            isMyTurn={myMoveTurn}
+          />
         </div>
 
-        <div className="flex justify-center gap-2 flex-wrap w-full py-1">
-          {bottomPlayersList.map((player) => (
-            <PlayerCard
-              key={player.userId}
-              player={player}
-              isTimerActive={playerTimerActive(
-                gameState.players.indexOf(player)
-              )}
-              isMe={player.userId === currentUserId}
-              game={game}
-              gameState={gameState}
-              localVideo={localVideo}
-            />
-          ))}
-        </div>
+        {bottomPlayersList.length > 0 && (
+          <div className="flex justify-center gap-2 flex-wrap w-full">
+            {bottomPlayersList.map((player) => (
+              <PlayerCard
+                key={player.userId}
+                player={player}
+                isTimerActive={playerTimerActive(gameState.players.indexOf(player))}
+                isMe={player.userId === currentUserId}
+                game={game}
+                gameState={gameState}
+                localVideo={localVideo}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
+      {/* ── Bottom bar (single row, no duplicated icons) ── */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-30 flex items-end justify-between gap-2 px-2 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] border-t border-white/8"
+        className="fixed bottom-0 left-0 right-0 z-30 grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 pb-[calc(0.6rem+env(safe-area-inset-bottom))] pt-2 border-t border-white/8"
         style={{ background: "var(--game-bottom-bar)" }}
       >
-        <div className="flex flex-col gap-2 shrink-0 max-w-[38%]">
-          <div
-            className="text-[10px] md:text-xs text-white/70 leading-tight px-2 py-1.5 rounded-lg bg-black/25 border border-white/6 select-none"
-            title="Prize pool"
-          >
+        {/* Left: pot label */}
+        <div className="flex flex-col gap-1 min-w-0">
+          <div className="text-[10px] md:text-xs text-white/65 leading-tight truncate">
             {potLabel}
-          </div>
-          <div className="flex items-center gap-2 px-1">
-            <div
-              className="h-11 w-11 rounded-xl bg-black/30 border border-white/10 flex items-center justify-center"
-              title="Trophy"
-            >
-              <Trophy className="w-6 h-6 text-amber-300" />
-            </div>
-            <div
-              className="h-11 w-11 rounded-xl bg-black/30 border border-white/10 flex items-center justify-center"
-              title="Vault"
-            >
-              <Package className="w-6 h-6 text-amber-700" strokeWidth={1.75} />
-            </div>
           </div>
           <ScreenRecorder gameId={game.id} iconSrc="/game/icons/record.png" />
         </div>
 
-        <div className="flex-1 flex justify-center items-end overflow-x-auto">
-          <div className="flex items-end justify-center gap-2 md:gap-3 px-2 py-1">
-            {gameState.gameMode === "RUSH" ? (
-              gameState.players.map((p, i) => (
+        {/* Center: dice */}
+        <div className="flex justify-center items-center">
+          {gameState.gameMode === "RUSH" ? (
+            <div className="flex items-center gap-2">
+              {gameState.players.map((p) => (
                 <Dice
                   key={p.id}
                   compact
@@ -648,35 +626,23 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
                     p.hasRolled
                   }
                 />
-              ))
-            ) : (
-              <Dice
-                ludino
-                value={gameState.diceValue}
-                onRoll={
-                  myRollTurn && !currentPlayer?.hasRolled
-                    ? handleRollDice
-                    : undefined
-                }
-                disabled={!myRollTurn || !!currentPlayer?.hasRolled}
-              />
-            )}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <Dice
+              value={gameState.diceValue}
+              onRoll={
+                myRollTurn && !currentPlayer?.hasRolled
+                  ? handleRollDice
+                  : undefined
+              }
+              disabled={!myRollTurn || !!currentPlayer?.hasRolled}
+            />
+          )}
         </div>
 
-        <div className="shrink-0 flex flex-col items-end gap-2">
-          <div
-            className="rounded-xl bg-white/95 border border-black/10 px-3 py-2 shadow-md min-w-[5.5rem]"
-            style={{ color: "#222" }}
-          >
-            <div className="text-[10px] font-extrabold tracking-wide text-black/80 uppercase">
-              Live
-            </div>
-            <div className="flex items-center gap-1.5 text-sm font-bold tabular-nums">
-              <span className="inline-block w-2 h-2 rounded-full bg-red-600 animate-pulse" />
-              {gameState.diceValue ?? "—"}
-            </div>
-          </div>
+        {/* Right: video controls only */}
+        <div className="flex justify-end items-center">
           <VideoCall
             gameId={game.id}
             userId={currentUserId}

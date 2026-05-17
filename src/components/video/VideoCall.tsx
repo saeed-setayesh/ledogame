@@ -142,10 +142,16 @@ export default function VideoCall({
 
   const btnClass = (on: boolean) =>
     cn(
-      "min-h-12 min-w-12 h-12 w-12 md:h-14 md:w-14 rounded-xl flex items-center justify-center",
-      "transition-all duration-300 shadow-lg hover:scale-105 active:scale-95",
-      "border-2 border-white/15 bg-black/35 backdrop-blur-sm",
-      on ? "ring-2 ring-emerald-500/60" : "opacity-80"
+      compact
+        ? "min-h-10 min-w-10 h-10 w-10 rounded-lg flex items-center justify-center"
+        : "min-h-12 min-w-12 h-12 w-12 md:h-14 md:w-14 rounded-xl flex items-center justify-center",
+      "transition-all duration-300 hover:scale-105 active:scale-95",
+      "border border-white/15 bg-black/35 backdrop-blur-sm",
+      on
+        ? compact
+          ? "ring-1 ring-sky-500/50"
+          : "ring-2 ring-emerald-500/60 border-2"
+        : "opacity-80"
     );
 
   return (
@@ -160,7 +166,7 @@ export default function VideoCall({
         <img
           src={cameraIconSrc}
           alt=""
-          className="w-7 h-7 md:w-8 md:h-8 object-contain"
+          className={compact ? "w-6 h-6 object-contain" : "w-7 h-7 md:w-8 md:h-8 object-contain"}
         />
       </button>
 
@@ -171,7 +177,7 @@ export default function VideoCall({
         title={isAudioEnabled ? "Mic on" : "Mic off"}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={micIconSrc} alt="" className="w-7 h-7 md:w-8 md:h-8 object-contain" />
+        <img src={micIconSrc} alt="" className={compact ? "w-6 h-6 object-contain" : "w-7 h-7 md:w-8 md:h-8 object-contain"} />
       </button>
 
       {!compact &&
