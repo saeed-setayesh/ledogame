@@ -161,7 +161,7 @@ export default function Lobby({ userId }: LobbyProps) {
               }
             >
               <div className="font-bold mb-1">Rush</div>
-              <div className="text-xs opacity-60">Your own dice. Roll & move fast. No waiting!</div>
+              <div className="text-xs opacity-60">Parallel play — roll & move on your timer. First piece home wins!</div>
             </button>
           </div>
         </div>

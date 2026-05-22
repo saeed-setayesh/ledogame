@@ -29,26 +29,24 @@ export class AIPlayer {
       throw new Error("Player not found");
     }
 
-    if (gameState.gameMode === "RUSH" && gameState.rushPhase === "MOVE") {
-      const current = gameState.players[gameState.currentTurn];
-      if (current.id !== playerId) {
+    if (gameState.gameMode === "RUSH") {
+      if (player.mustMove && player.diceValue !== null) {
+        const availableMoves = engine.getAvailableMoves(playerId);
+        if (availableMoves.length === 0) {
+          return { action: "roll" };
+        }
+        const bestPieceId = this.selectBestPiece(
+          player,
+          gameState,
+          availableMoves,
+          player.diceValue
+        );
+        return { action: "move", pieceId: bestPieceId };
+      }
+      if (!player.hasRolled) {
         return { action: "roll" };
       }
-      const diceValue = player.diceValue;
-      if (diceValue === null) {
-        return { action: "roll" };
-      }
-      const availableMoves = engine.getAvailableMoves(playerId);
-      if (availableMoves.length === 0) {
-        return { action: "roll" };
-      }
-      const bestPieceId = this.selectBestPiece(
-        player,
-        gameState,
-        availableMoves,
-        diceValue
-      );
-      return { action: "move", pieceId: bestPieceId };
+      return { action: "roll" };
     }
 
     if (!player.hasRolled || !gameState.diceValue) {
@@ -59,11 +57,9 @@ export class AIPlayer {
     const availableMoves = engine.getAvailableMoves(playerId);
 
     if (availableMoves.length === 0) {
-      // No moves available, skip turn (shouldn't happen but handle it)
       return { action: "roll" };
     }
 
-    // Get the best move
     const bestPieceId = this.selectBestPiece(
       player,
       gameState,
@@ -92,13 +88,6 @@ export class AIPlayer {
       return availableMoves[0];
     }
 
-    // Strategy priorities:
-    // 1. If rolled 6 and have pieces in home, get one out
-    // 2. Capture opponent pieces (land on them)
-    // 3. Move pieces closer to finish
-    // 4. Avoid unsafe positions
-
-    // Priority 1: Get pieces out of home if rolled 6
     if (diceValue === 6) {
       const homePieces = pieces.filter((p) => p.isHome);
       if (homePieces.length > 0) {
@@ -106,7 +95,6 @@ export class AIPlayer {
       }
     }
 
-    // Priority 2: Try to capture opponent pieces
     const captureMoves = this.findCaptureMoves(
       player,
       gameState,
@@ -117,13 +105,11 @@ export class AIPlayer {
       return captureMoves[0].pieceId;
     }
 
-    // Priority 3: Move pieces that are furthest along (closer to finish)
     const furthestPiece = this.findFurthestPiece(pieces, player.color);
     if (furthestPiece) {
       return furthestPiece.id;
     }
 
-    // Default: return first available piece
     return pieces[0].id;
   }
 
@@ -142,7 +128,6 @@ export class AIPlayer {
     for (const piece of availablePieces) {
       if (piece.isHome) continue;
 
-      // Calculate new position
       const path = this.getColorPath(player.color);
       const currentIndex = path.indexOf(piece.position);
       if (currentIndex === -1) continue;
@@ -152,7 +137,6 @@ export class AIPlayer {
 
       const newPosition = path[newIndex];
 
-      // Check if this position has opponent pieces (and not safe)
       if (!SAFE_POSITIONS.includes(newPosition)) {
         const hasOpponent = gameState.players.some((opponent) => {
           if (opponent.id === player.id) return false;
@@ -165,14 +149,12 @@ export class AIPlayer {
         });
 
         if (hasOpponent) {
-          // Score based on how close to finish (higher score for capturing)
           const score = 100 + (path.length - newIndex);
           captureMoves.push({ pieceId: piece.id, score });
         }
       }
     }
 
-    // Sort by score (highest first)
     return captureMoves.sort((a, b) => b.score - a.score);
   }
 
@@ -183,7 +165,7 @@ export class AIPlayer {
     pieces: GamePiece[],
     color: string
   ): GamePiece | null {
-    const path = this.getColorPath(color as any);
+    const path = this.getColorPath(color as Player["color"]);
     let furthestPiece: GamePiece | null = null;
     let furthestIndex = -1;
 
@@ -230,23 +212,14 @@ export class AIPlayer {
     return COLOR_PATHS[color] || [];
   }
 
-  /**
-   * Check if a user ID is an AI player
-   */
   static isAIPlayer(userId: string): boolean {
     return userId.startsWith("AI_");
   }
 
-  /**
-   * Generate AI user ID
-   */
   static generateAIUserId(index: number = 0): string {
     return `AI_${index}`;
   }
 
-  /**
-   * Get AI username
-   */
   static getAIUsername(userId: string): string {
     const match = userId.match(/AI_(\d+)/);
     const index = match ? parseInt(match[1]) : 0;

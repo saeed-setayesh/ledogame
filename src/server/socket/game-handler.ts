@@ -105,25 +105,7 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       });
 
       if (gameState && gameState.gameStatus === "ACTIVE") {
-        if (
-          gameState.gameMode === "RUSH" &&
-          gameState.rushPhase === "ROLL"
-        ) {
-          const needsAIRoll = gameState.players.some(
-            (p) => AIPlayer.isAIPlayer(p.userId) && !p.hasRolled
-          );
-          if (needsAIRoll) {
-            setTimeout(() => void processAITurn(gameId, io), 300);
-          }
-        } else {
-          const currentTurnPlayer = gameState.players[gameState.currentTurn];
-          if (
-            currentTurnPlayer &&
-            AIPlayer.isAIPlayer(currentTurnPlayer.userId)
-          ) {
-            await processAITurn(gameId, io);
-          }
-        }
+        setTimeout(() => void processAITurn(gameId, io), 300);
       }
     } catch (error: any) {
       socket.emit("game:error", { message: error.message });
@@ -227,28 +209,31 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         return;
       }
 
-      const isRushRollPhase =
-        gameState.gameMode === "RUSH" && gameState.rushPhase === "ROLL";
-
-      if (!isRushRollPhase) {
-        if (currentTurnPlayer.userId !== userId) {
-          console.log(
-            `[Game ${gameId}] ❌ TURN MISMATCH - Current turn index: ${gameState.currentTurn}, Current player: ${currentTurnPlayer.userId} (${currentTurnPlayer.id}), Requesting: ${userId} (${enginePlayer.id})`
-          );
-          socket.emit("game:state", { gameState });
-          io.to(`game:${gameId}`).emit("game:state", { gameState });
+      if (gameState.gameMode === "RUSH") {
+        if (enginePlayer.mustMove) {
           socket.emit("game:error", {
-            message: `Not your turn. It's ${
-              currentTurnPlayer.userId?.startsWith("AI_")
-                ? "AI"
-                : "another player"
-            }'s turn.`,
+            message: "You must move a piece before rolling again",
           });
           return;
         }
-      } else if (enginePlayer.hasRolled) {
+        if (enginePlayer.hasRolled) {
+          socket.emit("game:error", {
+            message: "You already rolled this round",
+          });
+          return;
+        }
+      } else if (currentTurnPlayer.userId !== userId) {
+        console.log(
+          `[Game ${gameId}] ❌ TURN MISMATCH - Current turn index: ${gameState.currentTurn}, Current player: ${currentTurnPlayer.userId} (${currentTurnPlayer.id}), Requesting: ${userId} (${enginePlayer.id})`
+        );
+        socket.emit("game:state", { gameState });
+        io.to(`game:${gameId}`).emit("game:state", { gameState });
         socket.emit("game:error", {
-          message: "You already rolled this round",
+          message: `Not your turn. It's ${
+            currentTurnPlayer.userId?.startsWith("AI_")
+              ? "AI"
+              : "another player"
+          }'s turn.`,
         });
         return;
       }
@@ -268,21 +253,12 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       });
 
       if (state.gameMode === "RUSH") {
-        if (state.rushPhase === "ROLL") {
-          io.to(`game:${gameId}`).emit("game:available-moves", {
-            moves: [],
-            forUserId: null,
-          });
-          setTimeout(() => void processAITurn(gameId, io), 200);
-        } else if (state.rushPhase === "MOVE") {
-          const cur = state.players[state.currentTurn];
-          const rushMoves = engine.getAvailableMoves(cur.id);
-          io.to(`game:${gameId}`).emit("game:available-moves", {
-            moves: rushMoves,
-            forUserId: cur.userId,
-          });
-          setTimeout(() => void processAITurn(gameId, io), 200);
-        }
+        const rushMoves = engine.getAvailableMoves(enginePlayer.id);
+        io.to(`game:${gameId}`).emit("game:available-moves", {
+          moves: rushMoves,
+          forUserId: enginePlayer.userId,
+        });
+        setTimeout(() => void processAITurn(gameId, io), 200);
         return;
       }
 
@@ -418,9 +394,16 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         return;
       }
 
-      // Verify it's actually their turn
       const currentTurnPlayer = gameState.players[gameState.currentTurn];
-      if (currentTurnPlayer.userId !== userId) {
+
+      if (gameState.gameMode === "RUSH") {
+        if (!enginePlayer.mustMove) {
+          socket.emit("game:error", {
+            message: "Roll the dice before moving",
+          });
+          return;
+        }
+      } else if (currentTurnPlayer.userId !== userId) {
         socket.emit("game:error", { message: "Not your turn" });
         return;
       }
@@ -460,12 +443,10 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         state,
       });
 
-      if (state.gameMode === "RUSH" && state.rushPhase === "MOVE" && !isGameFinished) {
-        const cur = state.players[state.currentTurn];
-        const nextMoves = engine.getAvailableMoves(cur.id);
+      if (state.gameMode === "RUSH" && !isGameFinished) {
         io.to(`game:${gameId}`).emit("game:available-moves", {
-          moves: nextMoves,
-          forUserId: cur.userId,
+          moves: [],
+          forUserId: enginePlayer.userId,
         });
       }
 
@@ -519,12 +500,9 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         if (gameState.gameMode === "CLASSIC") {
           shouldSendMoves =
             isPlayerTurn && gameState.diceValue !== null;
-        } else if (
-          gameState.gameMode === "RUSH" &&
-          gameState.rushPhase === "MOVE"
-        ) {
+        } else if (gameState.gameMode === "RUSH") {
           shouldSendMoves =
-            isPlayerTurn && gamePlayer.diceValue !== null;
+            gamePlayer.mustMove && gamePlayer.diceValue !== null;
         }
         if (shouldSendMoves) {
           const availableMoves = engine.getAvailableMoves(gamePlayer.id);
@@ -616,11 +594,13 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
       return;
     }
 
-    if (state.gameMode === "RUSH" && state.rushPhase === "ROLL") {
-      const aiUnrolled = state.players.find(
-        (p) => AIPlayer.isAIPlayer(p.userId) && !p.hasRolled
+    if (state.gameMode === "RUSH") {
+      const aiPlayer = state.players.find(
+        (p) =>
+          AIPlayer.isAIPlayer(p.userId) &&
+          (p.mustMove || (!p.hasRolled && !p.mustMove))
       );
-      if (!aiUnrolled) {
+      if (!aiPlayer) {
         return;
       }
 
@@ -628,98 +608,72 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
         setTimeout(resolve, 600 + Math.random() * 600)
       );
 
-      const diceValue = engine.rollDice(aiUnrolled.id);
+      if (aiPlayer.mustMove) {
+        const decision = AIPlayer.makeDecision(
+          engine,
+          state,
+          aiPlayer.id
+        );
+
+        if (decision.action === "move" && decision.pieceId !== undefined) {
+          const isGameFinished = engine.movePiece(
+            aiPlayer.id,
+            decision.pieceId
+          );
+          const newState = engine.getState();
+          await updateGameState(gameId, newState);
+
+          await prisma.gameMove.create({
+            data: {
+              gameId,
+              playerId: aiPlayer.userId,
+              diceRoll: newState.lastMove?.diceRoll || 0,
+              moveType: "PIECE_MOVE",
+              fromPosition: newState.lastMove?.fromPosition || 0,
+              toPosition: newState.lastMove?.toPosition || 0,
+            },
+          });
+
+          io.to(`game:${gameId}`).emit("game:piece-moved", {
+            playerId: aiPlayer.id,
+            pieceId: decision.pieceId,
+            state: newState,
+          });
+
+          io.to(`game:${gameId}`).emit("game:available-moves", {
+            moves: [],
+            forUserId: aiPlayer.userId,
+          });
+
+          if (isGameFinished && newState.winnerId) {
+            await handleGameFinish(gameId, newState.winnerId);
+          } else {
+            setTimeout(() => void processAITurn(gameId, io), 200);
+          }
+        }
+        return;
+      }
+
+      const diceValue = engine.rollDice(aiPlayer.id);
       state = engine.getState();
       await updateGameState(gameId, state);
 
       io.to(`game:${gameId}`).emit("game:dice-rolled", {
-        playerId: aiUnrolled.id,
+        playerId: aiPlayer.id,
         diceValue,
         state,
       });
 
-      if (state.rushPhase === "ROLL") {
-        io.to(`game:${gameId}`).emit("game:available-moves", {
-          moves: [],
-          forUserId: null,
-        });
-      } else if (state.rushPhase === "MOVE") {
-        const cur = state.players[state.currentTurn];
-        const moves = engine.getAvailableMoves(cur.id);
-        io.to(`game:${gameId}`).emit("game:available-moves", {
-          moves,
-          forUserId: cur.userId,
-        });
-      }
+      const moves = engine.getAvailableMoves(aiPlayer.id);
+      io.to(`game:${gameId}`).emit("game:available-moves", {
+        moves,
+        forUserId: aiPlayer.userId,
+      });
 
-      setTimeout(() => void processAITurn(gameId, io), 200);
-      return;
-    }
-
-    if (state.gameMode === "RUSH" && state.rushPhase === "MOVE") {
-      const currentPlayer = state.players[state.currentTurn];
-      if (!AIPlayer.isAIPlayer(currentPlayer.userId)) {
-        return;
-      }
-
-      await new Promise((resolve) =>
-        setTimeout(resolve, 800 + Math.random() * 700)
-      );
-
-      const decision = AIPlayer.makeDecision(
-        engine,
-        state,
-        currentPlayer.id
-      );
-
-      if (decision.action === "move" && decision.pieceId !== undefined) {
-        const isGameFinished = engine.movePiece(
-          currentPlayer.id,
-          decision.pieceId
-        );
-        const newState = engine.getState();
-        await updateGameState(gameId, newState);
-
-        await prisma.gameMove.create({
-          data: {
-            gameId,
-            playerId: currentPlayer.userId,
-            diceRoll: newState.lastMove?.diceRoll || 0,
-            moveType: "PIECE_MOVE",
-            fromPosition: newState.lastMove?.fromPosition || 0,
-            toPosition: newState.lastMove?.toPosition || 0,
-          },
-        });
-
-        io.to(`game:${gameId}`).emit("game:piece-moved", {
-          playerId: currentPlayer.id,
-          pieceId: decision.pieceId,
-          state: newState,
-        });
-
-        io.to(`game:${gameId}`).emit("game:available-moves", {
-          moves: [],
-          forUserId: null,
-        });
-
-        if (
-          newState.gameMode === "RUSH" &&
-          newState.rushPhase === "MOVE" &&
-          !isGameFinished
-        ) {
-          const cur = newState.players[newState.currentTurn];
-          const nextMoves = engine.getAvailableMoves(cur.id);
-          io.to(`game:${gameId}`).emit("game:available-moves", {
-            moves: nextMoves,
-            forUserId: cur.userId,
-          });
-        }
-
-        if (isGameFinished && newState.winnerId) {
-          await handleGameFinish(gameId, newState.winnerId);
-        } else {
-          setTimeout(() => void processAITurn(gameId, io), 200);
-        }
+      if (moves.length > 0) {
+        setTimeout(() => void processAITurn(gameId, io), 400);
+      } else {
+        setTimeout(() => void processAITurn(gameId, io), 200);
       }
       return;
     }

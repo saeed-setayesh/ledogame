@@ -1,6 +1,5 @@
 export type PlayerColor = "RED" | "BLUE" | "GREEN" | "YELLOW";
 export type GameModeType = "CLASSIC" | "RUSH";
-export type RushPhase = "ROLL" | "MOVE";
 
 export interface GamePiece {
   id: number;
@@ -18,6 +17,8 @@ export interface Player {
   pieces: GamePiece[];
   hasRolled: boolean;
   canMove: boolean;
+  /** RUSH: rolled and must pick a piece before rolling again. */
+  mustMove: boolean;
   /** Per-player roll; in CLASSIC only the current player has a value after rolling (mirrors diceValue). */
   diceValue: number | null;
 }
@@ -27,10 +28,6 @@ export interface LudoGameState {
   currentTurn: number;
   diceValue: number | null;
   gameMode: GameModeType;
-  /** RUSH only: simultaneous roll phase then ordered move phase. */
-  rushPhase?: RushPhase;
-  /** RUSH MOVE: seat i finished (moved or auto-skipped). */
-  rushRoundSeatsDone?: boolean[];
   gameStatus: "WAITING" | "ACTIVE" | "FINISHED";
   winnerId: string | null;
   turnEndsAt: string | null;
@@ -76,7 +73,10 @@ const START_POSITIONS: Record<PlayerColor, number> = {
 };
 
 export function normalizeGameState(raw: unknown): LudoGameState {
-  const s = raw as Partial<LudoGameState>;
+  const s = raw as Partial<LudoGameState> & {
+    rushPhase?: string;
+    rushRoundSeatsDone?: boolean[];
+  };
   const gameMode: GameModeType =
     s.gameMode === "RUSH" ? "RUSH" : "CLASSIC";
   const players = (s.players || []).map((p: Player) => ({
@@ -85,6 +85,13 @@ export function normalizeGameState(raw: unknown): LudoGameState {
       typeof p.diceValue === "number" ? p.diceValue : null,
     hasRolled: !!p.hasRolled,
     canMove: !!p.canMove,
+    mustMove:
+      typeof p.mustMove === "boolean"
+        ? p.mustMove
+        : gameMode === "RUSH" &&
+            !!p.hasRolled &&
+            typeof p.diceValue === "number" &&
+            p.canMove,
   }));
   return {
     players,
@@ -92,15 +99,6 @@ export function normalizeGameState(raw: unknown): LudoGameState {
     diceValue:
       s.diceValue !== undefined && s.diceValue !== null ? s.diceValue : null,
     gameMode,
-    rushPhase:
-      gameMode === "RUSH"
-        ? s.rushPhase === "MOVE"
-          ? "MOVE"
-          : "ROLL"
-        : undefined,
-    rushRoundSeatsDone: Array.isArray(s.rushRoundSeatsDone)
-      ? s.rushRoundSeatsDone
-      : undefined,
     gameStatus: s.gameStatus === "FINISHED" ? "FINISHED" : s.gameStatus === "WAITING" ? "WAITING" : "ACTIVE",
     winnerId: s.winnerId ?? null,
     turnEndsAt: s.turnEndsAt ?? null,
@@ -154,6 +152,7 @@ export class LudoEngine {
       })),
       hasRolled: false,
       canMove: false,
+      mustMove: false,
       diceValue: null,
     }));
 
@@ -162,8 +161,6 @@ export class LudoEngine {
       currentTurn: 0,
       diceValue: null,
       gameMode,
-      rushPhase: gameMode === "RUSH" ? "ROLL" : undefined,
-      rushRoundSeatsDone: undefined,
       gameStatus: "ACTIVE",
       winnerId: null,
       turnEndsAt: null,
@@ -174,21 +171,23 @@ export class LudoEngine {
   rollDice(playerId: string): number {
     const player = this.state.players.find((p) => p.id === playerId);
     if (!player) throw new Error("Player not found");
-    if (player.hasRolled) throw new Error("You have already rolled the dice");
 
     if (this.state.gameMode === "RUSH") {
-      if (this.state.rushPhase !== "ROLL") {
-        throw new Error("Not in roll phase");
+      if (player.mustMove) {
+        throw new Error("You must move a piece before rolling again");
       }
+      if (player.hasRolled) {
+        throw new Error("You have already rolled the dice");
+      }
+
       const diceValue = Math.floor(Math.random() * 6) + 1;
       player.diceValue = diceValue;
       player.hasRolled = true;
-      player.canMove = this.canPlayerMove(player, diceValue);
-      this.state.diceValue = null;
-
-      const allRolled = this.state.players.every((p) => p.hasRolled);
-      if (allRolled) {
-        this.enterRushMovePhase();
+      const moves = this.getAvailableMovesWithDice(player.id, diceValue);
+      player.canMove = moves.length > 0;
+      player.mustMove = moves.length > 0;
+      if (!player.mustMove) {
+        this.resetRushPlayerAction(player);
       }
       return diceValue;
     }
@@ -204,47 +203,11 @@ export class LudoEngine {
     return diceValue;
   }
 
-  /** After all RUSH players rolled: ordered move phase, auto-skip seats with no legal move. */
-  private enterRushMovePhase(): void {
-    this.state.rushPhase = "MOVE";
-    this.state.rushRoundSeatsDone = this.state.players.map(() => false);
-    this.state.diceValue = null;
-    this.advanceRushMoveCursor();
-  }
-
-  /** Find next seat that must move, or finish round. */
-  private advanceRushMoveCursor(): void {
-    const n = this.state.players.length;
-    const done = this.state.rushRoundSeatsDone!;
-    for (let i = 0; i < n; i++) {
-      if (done[i]) continue;
-      const p = this.state.players[i];
-      const dv = p.diceValue;
-      if (dv === null) {
-        done[i] = true;
-        continue;
-      }
-      const moves = this.getAvailableMovesWithDice(p.id, dv);
-      if (moves.length === 0) {
-        done[i] = true;
-        continue;
-      }
-      this.state.currentTurn = i;
-      return;
-    }
-    this.endRushRound();
-  }
-
-  private endRushRound(): void {
-    this.state.rushPhase = "ROLL";
-    this.state.rushRoundSeatsDone = undefined;
-    for (const p of this.state.players) {
-      p.hasRolled = false;
-      p.canMove = false;
-      p.diceValue = null;
-    }
-    this.state.diceValue = null;
-    this.state.currentTurn = 0;
+  private resetRushPlayerAction(player: Player): void {
+    player.hasRolled = false;
+    player.canMove = false;
+    player.mustMove = false;
+    player.diceValue = null;
   }
 
   private canPlayerMove(player: Player, diceValue: number): boolean {
@@ -269,18 +232,12 @@ export class LudoEngine {
     if (!player) throw new Error("Player not found");
 
     if (this.state.gameMode === "RUSH") {
-      if (this.state.rushPhase !== "MOVE") {
-        throw new Error("Not in move phase");
+      if (!player.hasRolled || !player.mustMove || player.diceValue === null) {
+        throw new Error("You must roll the dice first");
       }
-      const current = this.state.players[this.state.currentTurn];
-      if (!current || current.id !== playerId) throw new Error("Not your turn");
       const diceValue = player.diceValue;
-      if (diceValue === null) throw new Error("You must roll the dice first");
-
       return this.applyMove(player, pieceId, diceValue, () => {
-        const done = this.state.rushRoundSeatsDone!;
-        done[this.state.currentTurn] = true;
-        this.advanceRushMoveCursor();
+        this.resetRushPlayerAction(player);
       });
     }
 
@@ -387,6 +344,9 @@ export class LudoEngine {
   }
 
   private checkWin(player: Player): boolean {
+    if (this.state.gameMode === "RUSH") {
+      return player.pieces.some((piece) => piece.isFinished);
+    }
     return player.pieces.every((piece) => piece.isFinished);
   }
 
@@ -407,10 +367,9 @@ export class LudoEngine {
 
   skipTurn(): void {
     if (this.state.gameMode === "RUSH") {
-      if (this.state.rushPhase === "MOVE") {
-        const done = this.state.rushRoundSeatsDone;
-        if (done) done[this.state.currentTurn] = true;
-        this.advanceRushMoveCursor();
+      const player = this.state.players[this.state.currentTurn];
+      if (player?.mustMove) {
+        this.resetRushPlayerAction(player);
       }
       return;
     }
@@ -420,20 +379,25 @@ export class LudoEngine {
   }
 
   forceNextTurn(): void {
-    if (this.state.gameMode === "RUSH" && this.state.rushPhase === "MOVE") {
-      const done = this.state.rushRoundSeatsDone;
-      if (done) done[this.state.currentTurn] = true;
-      this.advanceRushMoveCursor();
+    if (this.state.gameMode === "RUSH") {
       return;
     }
     this.nextTurnClassic();
   }
 
+  /** RUSH: skip a timed-out player who rolled but did not move. */
+  forceRushSkip(playerId: string): void {
+    if (this.state.gameMode !== "RUSH") return;
+    const player = this.state.players.find((p) => p.id === playerId);
+    if (player?.mustMove) {
+      this.resetRushPlayerAction(player);
+    }
+  }
+
   getAvailableMoves(playerId: string): number[] {
-    if (this.state.gameMode === "RUSH" && this.state.rushPhase === "MOVE") {
+    if (this.state.gameMode === "RUSH") {
       const p = this.state.players.find((x) => x.id === playerId);
-      if (!p || p.diceValue === null) return [];
-      if (this.state.players[this.state.currentTurn]?.id !== playerId) {
+      if (!p || !p.hasRolled || !p.mustMove || p.diceValue === null) {
         return [];
       }
       return this.getAvailableMovesWithDice(playerId, p.diceValue);

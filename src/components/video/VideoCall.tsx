@@ -146,7 +146,7 @@ export default function VideoCall({
         ? "min-h-10 min-w-10 h-10 w-10 rounded-lg flex items-center justify-center"
         : "min-h-12 min-w-12 h-12 w-12 md:h-14 md:w-14 rounded-xl flex items-center justify-center",
       "transition-all duration-300 hover:scale-105 active:scale-95",
-      "border border-white/15 bg-black/35 backdrop-blur-sm",
+      "border border-amber-500/35 bg-black/35 backdrop-blur-sm",
       on
         ? compact
           ? "ring-1 ring-sky-500/50"

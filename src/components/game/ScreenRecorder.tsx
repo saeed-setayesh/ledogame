@@ -21,7 +21,9 @@ export default function ScreenRecorder({
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { mediaSource: "screen" } as any,
+        video: { mediaSource: "screen" } as MediaTrackConstraints & {
+          mediaSource?: string;
+        },
         audio: true,
       });
 
@@ -93,7 +95,6 @@ export default function ScreenRecorder({
         console.error("Error sharing:", error);
       }
     } else {
-      // Fallback: copy link or show share options
       alert("Sharing not supported. Please download and share manually.");
     }
   };
@@ -103,10 +104,10 @@ export default function ScreenRecorder({
       type="button"
       onClick={recording ? stopRecording : startRecording}
       className={cn(
-        "min-h-12 min-w-12 h-12 w-12 md:h-14 md:w-14 rounded-xl flex items-center justify-center",
-        "transition-all duration-300 shadow-lg hover:scale-105 active:scale-95",
-        "border-2 border-white/15 bg-black/35 backdrop-blur-sm",
-        recording && "ring-2 ring-red-500/70 animate-pulse"
+        "min-h-10 min-w-10 h-10 w-10 rounded-lg flex items-center justify-center",
+        "transition-all duration-300 hover:scale-105 active:scale-95",
+        "border border-amber-500/35 bg-black/35 backdrop-blur-sm",
+        recording && "ring-1 ring-red-500/70 animate-pulse"
       )}
       title={recording ? "Stop recording" : "Record screen"}
     >
@@ -114,7 +115,7 @@ export default function ScreenRecorder({
         <span className="w-4 h-4 bg-red-500 rounded-sm" />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={iconSrc} alt="" className="w-7 h-7 md:w-8 md:h-8 object-contain" />
+        <img src={iconSrc} alt="" className="w-6 h-6 object-contain" />
       )}
     </button>
   );

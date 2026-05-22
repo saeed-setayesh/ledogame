@@ -14,14 +14,17 @@ const activeGames = new Map<
 
 /** Countdown for roll/move; server stamps on each persisted state update. */
 export const TURN_COUNTDOWN_MS = 45_000;
+export const RUSH_TURN_COUNTDOWN_MS = 15_000;
 
 export function stampTurnDeadline(state: LudoGameState): LudoGameState {
   if (state.gameStatus !== "ACTIVE") {
     return { ...state, turnEndsAt: null };
   }
+  const ms =
+    state.gameMode === "RUSH" ? RUSH_TURN_COUNTDOWN_MS : TURN_COUNTDOWN_MS;
   return {
     ...state,
-    turnEndsAt: new Date(Date.now() + TURN_COUNTDOWN_MS).toISOString(),
+    turnEndsAt: new Date(Date.now() + ms).toISOString(),
   };
 }
 

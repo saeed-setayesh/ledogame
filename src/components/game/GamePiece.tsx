@@ -89,7 +89,8 @@ function getHomePosition(color: PlayerColor, pieceId: number): React.CSSProperti
   return gridToPercent(cx / GRID, cy / GRID);
 }
 
-const PIECE_W = "6.2%";
+const PIECE_W_TRACK = "4.8%";
+const PIECE_W_HOME = "5.2%";
 
 export default function GamePiece({
   color,
@@ -104,6 +105,7 @@ export default function GamePiece({
   if (isFinished) return null;
 
   const pos = isHome ? getHomePosition(color, pieceId) : getBoardPosition(position);
+  const pieceWidth = isHome ? PIECE_W_HOME : PIECE_W_TRACK;
 
   return (
     <button
@@ -114,7 +116,7 @@ export default function GamePiece({
       style={{
         position: "absolute",
         ...pos,
-        width: PIECE_W,
+        width: pieceWidth,
         aspectRatio: "1 / 1",
         transform: "translate(-50%, -50%)",
         zIndex: canMove ? 30 : selected ? 25 : 10,
@@ -126,8 +128,8 @@ export default function GamePiece({
         "touch-manipulation select-none",
         canMove ? "cursor-pointer" : "cursor-default disabled:cursor-default",
         "transition-transform duration-200",
-        canMove && "hover:scale-125 active:scale-110 animate-pulse-glow",
-        selected && "scale-125",
+        canMove && "hover:scale-110 active:scale-105 animate-pulse-glow",
+        selected && "scale-110",
         !canMove && "opacity-95"
       )}
     >
@@ -136,7 +138,7 @@ export default function GamePiece({
         alt=""
         fill
         sizes="56px"
-        className="object-contain drop-shadow-[0_3px_6px_rgba(0,0,0,0.65)] pointer-events-none"
+        className="object-contain drop-shadow-[0_2px_4px_rgba(0,0,0,0.55)] pointer-events-none"
         unoptimized
       />
       {canMove && (

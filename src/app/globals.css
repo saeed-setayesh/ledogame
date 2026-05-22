@@ -93,6 +93,16 @@ html {
   scroll-behavior: smooth;
 }
 
+/** Capacitor: avoid background scroll behind fullscreen video splash */
+html.cap-splash-lock {
+  overflow: hidden;
+  height: 100%;
+}
+
+html.cap-splash-lock body {
+  overflow: hidden;
+}
+
 button:focus-visible,
 [role="button"]:focus-visible {
   outline: 2px solid var(--gold);

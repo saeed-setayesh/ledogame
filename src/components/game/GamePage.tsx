@@ -29,7 +29,8 @@ const COLOR_MAP: Record<PlayerColor, string> = {
   YELLOW: "#f1c40f",
 };
 
-const TURN_MS = 45_000;
+const CLASSIC_TURN_MS = 45_000;
+const RUSH_TURN_MS = 15_000;
 
 function flagEmoji(code: string | null | undefined): string {
   if (!code || code.length !== 2) return "\u{1F3F3}";
@@ -46,8 +47,8 @@ function isMyRollTurn(state: LudoGameState, userId: string): boolean {
   const idx = state.players.findIndex((p) => p.userId === userId);
   if (idx === -1) return false;
   const me = state.players[idx];
-  if (state.gameMode === "RUSH" && state.rushPhase === "ROLL") {
-    return !me.hasRolled;
+  if (state.gameMode === "RUSH") {
+    return !me.hasRolled && !me.mustMove;
   }
   if (state.gameMode === "CLASSIC") {
     return state.currentTurn === idx && !me.hasRolled;
@@ -61,13 +62,20 @@ function isMyMoveTurn(state: LudoGameState, userId: string): boolean {
   if (state.gameMode === "CLASSIC") {
     return state.currentTurn === idx;
   }
-  if (state.gameMode === "RUSH" && state.rushPhase === "MOVE") {
-    return state.currentTurn === idx;
+  if (state.gameMode === "RUSH") {
+    const me = state.players[idx];
+    return me.mustMove && me.hasRolled;
   }
   return false;
 }
 
-function TurnRing({ endsAt }: { endsAt: string | null }) {
+function TurnRing({
+  endsAt,
+  turnMs,
+}: {
+  endsAt: string | null;
+  turnMs: number;
+}) {
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!endsAt) return;
@@ -76,7 +84,7 @@ function TurnRing({ endsAt }: { endsAt: string | null }) {
   }, [endsAt]);
   if (!endsAt) return null;
   const left = Math.max(0, new Date(endsAt).getTime() - Date.now());
-  const frac = Math.min(1, left / TURN_MS);
+  const frac = Math.min(1, left / turnMs);
   const r = 20;
   const c = 2 * Math.PI * r;
   const dashoffset = c * (1 - frac);
@@ -156,7 +164,14 @@ function PlayerCard({
           boxShadow: `inset 0 0 0 2px ${COLOR_MAP[player.color]}88`,
         }}
       >
-        {isTimerActive && <TurnRing endsAt={gameState.turnEndsAt} />}
+        {isTimerActive && (
+          <TurnRing
+            endsAt={gameState.turnEndsAt}
+            turnMs={
+              gameState.gameMode === "RUSH" ? RUSH_TURN_MS : CLASSIC_TURN_MS
+            }
+          />
+        )}
         {showLive && localVideo?.stream ? (
           <LiveAvatar stream={localVideo.stream} />
         ) : (
@@ -243,7 +258,7 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
 
     socket.on("game:dice-rolled", ({ state }: { state: LudoGameState }) => {
       setGameState(state);
-      if (state.gameMode === "RUSH" && state.rushPhase === "ROLL") {
+      if (state.gameMode === "RUSH" && !isMyMoveTurn(state, currentUserId)) {
         setAvailableMoves([]);
       } else if (!isMyMoveTurn(state, currentUserId)) {
         setAvailableMoves([]);
@@ -396,18 +411,13 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   const bottomPlayersList = gameState.players.slice(midSeat);
 
   let turnHint = "";
-  if (gameState.gameMode === "RUSH" && gameState.rushPhase === "ROLL") {
-    turnHint =
-      myRollTurn && !currentPlayer?.hasRolled
-        ? "Roll your dice"
-        : "Waiting for all players to roll…";
-  } else if (gameState.gameMode === "RUSH" && gameState.rushPhase === "MOVE") {
-    if (myMoveTurn) {
-      turnHint =
-        currentPlayer?.diceValue != null ? "Move a piece" : "…";
+  if (gameState.gameMode === "RUSH") {
+    if (myRollTurn) {
+      turnHint = "Your turn — roll";
+    } else if (myMoveTurn) {
+      turnHint = "Move a piece";
     } else {
-      const cur = gameState.players[gameState.currentTurn];
-      turnHint = `${cur?.userId?.startsWith("AI_") ? "AI" : "Opponent"} is moving`;
+      turnHint = "Playing…";
     }
   } else if (myRollTurn && !currentPlayer?.hasRolled) {
     turnHint = "Your turn — roll";
@@ -423,11 +433,12 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
     if (gameState.gameMode === "CLASSIC") {
       return gameState.currentTurn === idx;
     }
-    if (gameState.rushPhase === "ROLL") {
-      return !p.hasRolled;
-    }
-    if (gameState.rushPhase === "MOVE") {
-      return gameState.currentTurn === idx;
+    if (gameState.gameMode === "RUSH") {
+      const isMe = p.userId === currentUserId;
+      if (!isMe) return false;
+      return (
+        (!p.hasRolled && !p.mustMove) || (p.mustMove && p.hasRolled)
+      );
     }
     return false;
   };
@@ -601,44 +612,25 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
 
         {/* Center: dice */}
         <div className="flex justify-center items-center">
-          {gameState.gameMode === "RUSH" ? (
-            <div className="flex items-center gap-2">
-              {gameState.players.map((p) => (
-                <Dice
-                  key={p.id}
-                  compact
-                  label={p.color.slice(0, 1)}
-                  value={
-                    p.hasRolled || gameState.rushPhase === "MOVE"
-                      ? p.diceValue
-                      : null
-                  }
-                  onRoll={
-                    p.userId === currentUserId &&
-                    gameState.rushPhase === "ROLL" &&
-                    !p.hasRolled
-                      ? handleRollDice
-                      : undefined
-                  }
-                  disabled={
-                    p.userId !== currentUserId ||
-                    gameState.rushPhase !== "ROLL" ||
-                    p.hasRolled
-                  }
-                />
-              ))}
-            </div>
-          ) : (
-            <Dice
-              value={gameState.diceValue}
-              onRoll={
-                myRollTurn && !currentPlayer?.hasRolled
-                  ? handleRollDice
-                  : undefined
-              }
-              disabled={!myRollTurn || !!currentPlayer?.hasRolled}
-            />
-          )}
+          <Dice
+            value={
+              gameState.gameMode === "RUSH"
+                ? currentPlayer?.mustMove || currentPlayer?.hasRolled
+                  ? currentPlayer?.diceValue ?? null
+                  : null
+                : gameState.diceValue
+            }
+            onRoll={
+              myRollTurn && !currentPlayer?.hasRolled
+                ? handleRollDice
+                : undefined
+            }
+            disabled={
+              gameState.gameMode === "RUSH"
+                ? !myRollTurn || !!currentPlayer?.hasRolled
+                : !myRollTurn || !!currentPlayer?.hasRolled
+            }
+          />
         </div>
 
         {/* Right: video controls only */}

@@ -17,14 +17,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Ledo Game - Online Multiplayer",
+  title: "LUDINO — Online Multiplayer",
   description:
     "Play Ludo online with friends, compete in tournaments, and win USDT prizes!",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Ledo Game",
+    title: "LUDINO",
   },
   icons: {
     icon: "/icons/icon-192.png",

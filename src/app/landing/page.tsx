@@ -147,11 +147,11 @@ export default function LandingPage() {
                   title: "PWA & web",
                   body: "Installable progressive web app; same product URL reviewers can open in Safari or Chrome.",
                 },
-                {
-                  icon: <Smartphone className="h-6 w-6 text-[var(--gold)]" />,
-                  title: "Native roadmap",
-                  body: "This landing documents the product for Apple/Google verification letters; wrap the web app or ship native shells when ready.",
-                },
+              {
+                icon: <Smartphone className="h-6 w-6 text-[var(--gold)]" />,
+                title: "Capacitor native",
+                body: "One codebase for App Store & Google Play: Capacitor wraps the Next.js web app + video splash.",
+              },
               ].map((f) => (
                 <div
                   key={f.title}
@@ -219,16 +219,23 @@ export default function LandingPage() {
               Download
             </h2>
             <p className="mx-auto mb-8 max-w-lg px-2 text-sm leading-relaxed text-white/65 sm:mb-10 sm:text-base">
-              Mobile store builds can wrap this web experience or ship as a
-              dedicated native client. Badges below are placeholders — add your
-              real store URLs when the apps are approved.
+              Native shells use{" "}
+              <strong className="text-white/85">Capacitor</strong> (single
+              project: <code className="text-white/70">android/</code>
+              {" + "}
+              <code className="text-white/70">ios/</code>). The app loads your
+              deployed site in a WebView; open the repos in Android Studio /
+              Xcode, set <code className="text-white/70">CAPACITOR_SERVER_URL</code>
+              , run <code className="text-white/70">npm run cap:sync</code>, then
+              build release bundles. Launch video:{" "}
+              <code className="text-white/70">/splash/launch.mp4</code>.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
               <span className="rounded-xl border border-white/10 bg-black/40 px-6 py-3.5 text-xs leading-normal text-white/50 sm:py-3">
-                App Store — coming soon
+                Capacitor iOS → App Store (build in Xcode)
               </span>
               <span className="rounded-xl border border-white/10 bg-black/40 px-6 py-3.5 text-xs leading-normal text-white/50 sm:py-3">
-                Google Play — coming soon
+                Capacitor Android → Play (Android Studio + Java&nbsp;17)
               </span>
             </div>
           </section>

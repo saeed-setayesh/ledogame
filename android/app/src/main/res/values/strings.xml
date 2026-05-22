@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">LUDINO</string>
+    <string name="title_activity_main">LUDINO</string>
+    <string name="package_name">com.ludino.app</string>
+    <string name="custom_url_scheme">com.ludino.app</string>
+</resources>
