@@ -143,13 +143,15 @@ export default function VideoCall({
   const btnClass = (on: boolean) =>
     cn(
       compact
-        ? "min-h-10 min-w-10 h-10 w-10 rounded-lg flex items-center justify-center"
+        ? "min-h-10 min-w-10 h-10 w-10 rounded-xl flex items-center justify-center bg-white shadow-inner"
         : "min-h-12 min-w-12 h-12 w-12 md:h-14 md:w-14 rounded-xl flex items-center justify-center",
       "transition-all duration-300 hover:scale-105 active:scale-95",
-      "border border-amber-500/35 bg-black/35 backdrop-blur-sm",
+      compact
+        ? "border border-[#f0cf8c]"
+        : "border border-amber-500/35 bg-black/35 backdrop-blur-sm",
       on
         ? compact
-          ? "ring-1 ring-sky-500/50"
+          ? "ring-2 ring-[#f5a22b]/60"
           : "ring-2 ring-emerald-500/60 border-2"
         : "opacity-80"
     );

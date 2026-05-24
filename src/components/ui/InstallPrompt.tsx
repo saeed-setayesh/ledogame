@@ -3,49 +3,87 @@
 import { useEffect, useState } from "react";
 import { Download, X, Share } from "lucide-react";
 
+function isCapacitorNativeWebView() {
+  if (typeof window === "undefined") return false;
+  const capacitor = (
+    window as Window & {
+      Capacitor?: { isNativePlatform?: () => boolean };
+    }
+  ).Capacitor;
+  return (
+    capacitor?.isNativePlatform?.() === true ||
+    document.documentElement.classList.contains("cap-native")
+  );
+}
+
 export default function InstallPrompt() {
-  const [deferred, setDeferred] = useState<any>(null);
+  const [deferred, setDeferred] = useState<{
+    prompt: () => void;
+    userChoice: Promise<unknown>;
+  } | null>(null);
   const [visible, setVisible] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
-    // Check if already running as PWA
-    const standalone =
-      window.matchMedia("(display-mode: standalone)").matches ||
-      (window.navigator as any).standalone === true;
-    setIsStandalone(standalone);
-    if (standalone) return;
-
-    // Detect iOS Safari
-    const ua = navigator.userAgent;
-    const ios =
-      /iPad|iPhone|iPod/.test(ua) ||
-      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    const safari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
-    setIsIOS(ios && safari);
-
-    // Listen for Chromium install prompt
-    function handler(e: Event) {
-      e.preventDefault();
-      setDeferred(e);
-      setVisible(true);
+    if (isCapacitorNativeWebView()) {
+      setVisible(false);
+      setDeferred(null);
+      return;
     }
-    window.addEventListener("beforeinstallprompt", handler);
 
-    // On iOS Safari, show custom instructions after a short delay
-    if (ios && safari) {
-      const dismissed = sessionStorage.getItem("pwa-install-dismissed");
-      if (!dismissed) {
-        const timer = setTimeout(() => setVisible(true), 3000);
-        return () => {
-          clearTimeout(timer);
-          window.removeEventListener("beforeinstallprompt", handler);
-        };
+    let cancelled = false;
+    let cleanup: (() => void) | undefined;
+
+    void import("@capacitor/core").then(({ Capacitor }) => {
+      if (cancelled || Capacitor.isNativePlatform()) {
+        setVisible(false);
+        setDeferred(null);
+        return;
       }
-    }
 
-    return () => window.removeEventListener("beforeinstallprompt", handler);
+      const standalone =
+        window.matchMedia("(display-mode: standalone)").matches ||
+        (window.navigator as Navigator & { standalone?: boolean }).standalone ===
+          true;
+      setIsStandalone(standalone);
+      if (standalone) return;
+
+      const ua = navigator.userAgent;
+      const ios =
+        /iPad|iPhone|iPod/.test(ua) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      const safari = /Safari/.test(ua) && !/Chrome|CriOS|FxiOS/.test(ua);
+      setIsIOS(ios && safari);
+
+      function handler(e: Event) {
+        if (isCapacitorNativeWebView()) return;
+        e.preventDefault();
+        setDeferred(e as { prompt: () => void; userChoice: Promise<unknown> });
+        setVisible(true);
+      }
+      window.addEventListener("beforeinstallprompt", handler);
+
+      if (ios && safari) {
+        const dismissed = sessionStorage.getItem("pwa-install-dismissed");
+        if (!dismissed) {
+          const timer = setTimeout(() => setVisible(true), 3000);
+          cleanup = () => {
+            clearTimeout(timer);
+            window.removeEventListener("beforeinstallprompt", handler);
+          };
+          return;
+        }
+      }
+
+      cleanup = () =>
+        window.removeEventListener("beforeinstallprompt", handler);
+    });
+
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
   }, []);
 
   async function install() {
@@ -66,7 +104,7 @@ export default function InstallPrompt() {
     sessionStorage.setItem("pwa-install-dismissed", "1");
   }
 
-  if (!visible || isStandalone) return null;
+  if (!visible || isStandalone || isCapacitorNativeWebView()) return null;
 
   return (
     <div className="fixed bottom-4 left-4 right-4 z-999 flex justify-center">

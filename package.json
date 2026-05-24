@@ -8,7 +8,7 @@
     "build": "prisma generate && next build",
     "start": "tsx server.ts",
     "lint": "eslint",
-    "cap:sync": "npx cap sync",
+    "cap:sync": "node scripts/cap-sync.mjs",
     "cap:open:android": "npx cap open android",
     "cap:open:ios": "npx cap open ios",
     "icons:generate": "node scripts/generate-icons-from-logo.mjs"

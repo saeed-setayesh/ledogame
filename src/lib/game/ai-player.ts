@@ -1,4 +1,9 @@
 import { LudoEngine, LudoGameState, Player, GamePiece } from "./ludo-engine";
+import {
+  FINISH_PROGRESS,
+  SAFE_OUTER_TRACK_INDICES,
+  pathPositionToOuterIndex,
+} from "./ludo-track-cells";
 
 export interface AIDecision {
   action: "roll" | "move";
@@ -105,7 +110,7 @@ export class AIPlayer {
       return captureMoves[0].pieceId;
     }
 
-    const furthestPiece = this.findFurthestPiece(pieces, player.color);
+    const furthestPiece = this.findFurthestPiece(pieces);
     if (furthestPiece) {
       return furthestPiece.id;
     }
@@ -123,35 +128,33 @@ export class AIPlayer {
     diceValue: number
   ): Array<{ pieceId: number; score: number }> {
     const captureMoves: Array<{ pieceId: number; score: number }> = [];
-    const SAFE_POSITIONS = [1, 9, 14, 22, 27, 35, 40, 48];
-
     for (const piece of availablePieces) {
       if (piece.isHome) continue;
 
-      const path = this.getColorPath(player.color);
-      const currentIndex = path.indexOf(piece.position);
-      if (currentIndex === -1) continue;
+      const newPosition = piece.position + diceValue;
+      if (newPosition > FINISH_PROGRESS) continue;
+      const newOuterIndex = pathPositionToOuterIndex(player.color, newPosition);
+      if (
+        newOuterIndex === null ||
+        SAFE_OUTER_TRACK_INDICES.has(newOuterIndex)
+      ) {
+        continue;
+      }
 
-      const newIndex = currentIndex + diceValue;
-      if (newIndex >= path.length) continue;
-
-      const newPosition = path[newIndex];
-
-      if (!SAFE_POSITIONS.includes(newPosition)) {
-        const hasOpponent = gameState.players.some((opponent) => {
-          if (opponent.id === player.id) return false;
-          return opponent.pieces.some(
-            (oppPiece) =>
-              !oppPiece.isHome &&
-              !oppPiece.isFinished &&
-              oppPiece.position === newPosition
+      const hasOpponent = gameState.players.some((opponent) => {
+        if (opponent.id === player.id) return false;
+        return opponent.pieces.some((oppPiece) => {
+          if (oppPiece.isHome || oppPiece.isFinished) return false;
+          return (
+            pathPositionToOuterIndex(opponent.color, oppPiece.position) ===
+            newOuterIndex
           );
         });
+      });
 
-        if (hasOpponent) {
-          const score = 100 + (path.length - newIndex);
-          captureMoves.push({ pieceId: piece.id, score });
-        }
+      if (hasOpponent) {
+        const score = 100 + (FINISH_PROGRESS - newPosition);
+        captureMoves.push({ pieceId: piece.id, score });
       }
     }
 
@@ -161,18 +164,14 @@ export class AIPlayer {
   /**
    * Find the piece that is furthest along the path
    */
-  private static findFurthestPiece(
-    pieces: GamePiece[],
-    color: string
-  ): GamePiece | null {
-    const path = this.getColorPath(color as Player["color"]);
+  private static findFurthestPiece(pieces: GamePiece[]): GamePiece | null {
     let furthestPiece: GamePiece | null = null;
     let furthestIndex = -1;
 
     for (const piece of pieces) {
       if (piece.isHome || piece.isFinished) continue;
 
-      const index = path.indexOf(piece.position);
+      const index = piece.position;
       if (index > furthestIndex) {
         furthestIndex = index;
         furthestPiece = piece;
@@ -180,36 +179,6 @@ export class AIPlayer {
     }
 
     return furthestPiece || pieces[0] || null;
-  }
-
-  /**
-   * Get the path for a color
-   */
-  private static getColorPath(color: string): number[] {
-    const COLOR_PATHS: Record<string, number[]> = {
-      RED: [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-        20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
-        38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
-      ],
-      BLUE: [
-        13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-        31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-        49, 50, 51, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
-      ],
-      GREEN: [
-        26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-        44, 45, 46, 47, 48, 49, 50, 51, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
-        12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-      ],
-      YELLOW: [
-        39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 0, 1, 2, 3, 4, 5, 6,
-        7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-        26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
-      ],
-    };
-
-    return COLOR_PATHS[color] || [];
   }
 
   static isAIPlayer(userId: string): boolean {

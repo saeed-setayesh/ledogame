@@ -4,12 +4,26 @@ import { useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "ledo_splash_seen_session";
 
+function isCapacitorNativeWebView() {
+  if (typeof window === "undefined") return false;
+  const capacitor = (
+    window as Window & {
+      Capacitor?: { isNativePlatform?: () => boolean };
+    }
+  ).Capacitor;
+  return (
+    capacitor?.isNativePlatform?.() === true ||
+    document.documentElement.classList.contains("cap-native")
+  );
+}
+
 export default function PwaSplash() {
   const [visible, setVisible] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (isCapacitorNativeWebView()) return;
     try {
       if (sessionStorage.getItem(STORAGE_KEY)) return;
     } catch {
@@ -21,7 +35,8 @@ export default function PwaSplash() {
       (window.navigator as Navigator & { standalone?: boolean }).standalone ===
         true;
     if (!isStandalone) return;
-    setVisible(true);
+    const timer = window.setTimeout(() => setVisible(true), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const dismiss = () => {
@@ -48,11 +63,11 @@ export default function PwaSplash() {
     };
   }, [visible]);
 
-  if (!visible) return null;
+  if (!visible || isCapacitorNativeWebView()) return null;
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black"
+      className="fixed inset-0 z-100 flex flex-col items-center justify-center bg-black"
       role="dialog"
       aria-label="Loading"
     >

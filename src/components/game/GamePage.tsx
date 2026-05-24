@@ -18,8 +18,29 @@ import Image from "next/image";
 import Link from "next/link";
 
 interface GamePageProps {
-  game: any;
+  game: GameView;
   currentUserId: string;
+}
+
+interface GameUserView {
+  username?: string | null;
+  avatar?: string | null;
+  level?: number | null;
+  countryCode?: string | null;
+}
+
+interface GamePlayerView {
+  id: string;
+  userId: string;
+  user?: GameUserView | null;
+}
+
+interface GameView {
+  id: string;
+  status?: string;
+  entryFee?: string | number | null;
+  totalPot?: string | number | null;
+  players?: GamePlayerView[];
 }
 
 const COLOR_MAP: Record<PlayerColor, string> = {
@@ -76,14 +97,14 @@ function TurnRing({
   endsAt: string | null;
   turnMs: number;
 }) {
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!endsAt) return;
-    const id = setInterval(() => setTick(Date.now()), 200);
+    const id = setInterval(() => setNow(Date.now()), 200);
     return () => clearInterval(id);
   }, [endsAt]);
   if (!endsAt) return null;
-  const left = Math.max(0, new Date(endsAt).getTime() - Date.now());
+  const left = Math.max(0, new Date(endsAt).getTime() - now);
   const frac = Math.min(1, left / turnMs);
   const r = 20;
   const c = 2 * Math.PI * r;
@@ -127,14 +148,18 @@ function PlayerCard({
   gameState,
   localVideo,
 }: {
-  player: { userId: string; color: PlayerColor; pieces: any[] };
+  player: {
+    userId: string;
+    color: PlayerColor;
+    pieces: Array<{ isFinished: boolean }>;
+  };
   isTimerActive: boolean;
   isMe: boolean;
-  game: any;
+  game: GameView;
   gameState: LudoGameState;
   localVideo: LocalVideoState | null;
 }) {
-  const gamePlayer = game?.players?.find((p: any) => p.userId === player.userId);
+  const gamePlayer = game?.players?.find((p) => p.userId === player.userId);
   const user = gamePlayer?.user;
   const username =
     user?.username ||
@@ -143,25 +168,23 @@ function PlayerCard({
       : "Player");
   const avatar = user?.avatar || "👤";
   const level = typeof user?.level === "number" ? user.level : 1;
-  const finishedCount = player.pieces.filter((p: any) => p.isFinished).length;
+  const finishedCount = player.pieces.filter((p) => p.isFinished).length;
   const showLive =
     isMe && localVideo?.enabled && localVideo.stream && isVideoLive(localVideo.stream);
 
   return (
     <div
-      className="flex items-center gap-2 px-2 py-2 rounded-xl min-w-0 max-w-[9.5rem]"
+      className="relative flex items-center gap-2 min-w-0 max-w-48 px-1 py-1"
       style={{
-        background: "var(--game-panel)",
-        border: `1px solid ${isTimerActive ? "rgba(120,200,160,0.45)" : "rgba(255,255,255,0.08)"}`,
-        boxShadow: isTimerActive
-          ? "0 0 12px rgba(80, 160, 120, 0.2)"
+        filter: isTimerActive
+          ? "drop-shadow(0 0 12px rgba(255,210,74,0.45))"
           : "none",
       }}
     >
       <div
-        className="relative w-11 h-11 shrink-0 rounded-full overflow-hidden"
+        className="relative z-10 w-14 h-14 shrink-0 rounded-full overflow-hidden border-[5px] border-white bg-white"
         style={{
-          boxShadow: `inset 0 0 0 2px ${COLOR_MAP[player.color]}88`,
+          boxShadow: `0 3px 10px rgba(0,0,0,0.45), inset 0 0 0 2px ${COLOR_MAP[player.color]}88`,
         }}
       >
         {isTimerActive && (
@@ -185,19 +208,24 @@ function PlayerCard({
           </div>
         )}
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1">
-          <span className="text-sm leading-none" title={user?.countryCode || ""}>
+      <div className="min-w-0 flex-1 -ml-2 pt-1">
+        <div className="pl-3 text-[14px] md:text-base font-serif font-bold text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.75)] leading-tight truncate">
+          Level {level}
+        </div>
+        <div className="relative h-7 min-w-[5.2rem] rounded-full bg-white shadow-[0_3px_8px_rgba(0,0,0,0.35)] overflow-hidden border border-white/80">
+          <div
+            className="absolute inset-y-0 right-0 w-[72%] rounded-l-full"
+            style={{
+              background: `linear-gradient(90deg, ${COLOR_MAP[player.color]}cc, ${COLOR_MAP[player.color]})`,
+            }}
+          />
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-lg leading-none" title={user?.countryCode || ""}>
             {flagEmoji(user?.countryCode)}
           </span>
-          <div className="text-[11px] font-bold truncate text-white/95">
-            {username}
-          </div>
         </div>
-        <div className="flex items-center gap-1 text-[10px] text-white/55 mt-0.5">
-          <span>Lv.{level}</span>
-          <span>•</span>
-          <span>{finishedCount}/4</span>
+        <div className="pl-3 mt-0.5 text-[9px] font-semibold text-white/90 drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)] truncate">
+          {username}
+          <span className="ml-1 text-white/70">{finishedCount}/4</span>
         </div>
       </div>
     </div>
@@ -444,63 +472,60 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   };
 
   return (
-    <div className="game-shell-bg min-h-dvh relative flex flex-col overflow-hidden pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)]">
+    <div
+      className="min-h-dvh relative flex flex-col overflow-hidden pb-[calc(7.25rem+env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)]"
+      style={{
+        background:
+          "radial-gradient(circle at 50% 18%, rgba(255,255,255,0.08), transparent 24%), linear-gradient(180deg, #333630 0%, #181b19 55%, #111312 100%)",
+      }}
+    >
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.18]"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.22) 1px, transparent 0)",
+          backgroundSize: "18px 18px",
+        }}
+      />
 
-      {/* ── Header (no duplicate / floating icons) ── */}
-      <header className="relative z-40 flex items-center justify-between gap-1.5 px-2 pt-2 pb-1 max-w-3xl mx-auto w-full">
-        <div className="flex items-center gap-1 shrink-0">
+      {/* Top controls and logo */}
+      <header className="relative z-40 mx-auto flex w-full max-w-[540px] items-start justify-center px-4 pt-2 pb-1">
+        <div className="absolute left-4 top-5 flex flex-col gap-2">
           <button
             type="button"
             onClick={handleExitGame}
             disabled={isLeaving}
-            className="w-10 h-10 flex items-center justify-center rounded-xl bg-black/45 border border-white/12 active:scale-95 transition-transform text-white/85"
+            className="h-12 w-12 rounded-xl border-[3px] border-[#b94617] bg-linear-to-b from-[#ffb333] to-[#de3a16] text-[#7b1308] shadow-[0_4px_0_#6e2a11,0_7px_12px_rgba(0,0,0,0.4)] active:translate-y-0.5"
             aria-label="Exit"
           >
-            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M15 17l-5-5 5-5" />
-              <path d="M21 12H10" />
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <svg viewBox="0 0 24 24" className="m-auto h-8 w-8" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" aria-hidden>
+              <path d="M6 6l12 12M18 6L6 18" />
             </svg>
-          </button>
-          <button
-            type="button"
-            className="w-10 h-10 flex items-center justify-center rounded-xl bg-black/45 border border-white/12 active:scale-95 transition-transform"
-            aria-label="Rewards"
-          >
-            <Image src="/game/icons/key.png" alt="" width={30} height={30} unoptimized />
-          </button>
-          <button
-            type="button"
-            className="w-10 h-10 flex items-center justify-center rounded-xl bg-black/45 border border-white/12 active:scale-95 transition-transform"
-            aria-label="Achievements"
-          >
-            <Image src="/game/icons/star.png" alt="" width={28} height={28} unoptimized />
           </button>
         </div>
 
-        <div className="flex-1 flex justify-center min-w-0 px-0.5">
+        <div className="flex justify-center">
           <Image
-            src="/game/logo.png"
+            src="/game/logo-wide.png"
             alt="LUDINO"
-            width={480}
-            height={180}
-            className="h-[5.75rem] sm:h-28 md:h-32 lg:h-36 w-auto max-w-[min(92vw,28rem)] object-contain drop-shadow-[0_4px_14px_rgba(0,0,0,0.55)]"
+            width={520}
+            height={290}
+            className="h-24 w-auto max-w-[58vw] object-contain drop-shadow-[0_8px_12px_rgba(0,0,0,0.65)]"
             unoptimized
             priority
           />
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="absolute right-4 top-5 flex flex-col items-center gap-2">
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <button
                 type="button"
-                className="w-10 h-10 flex items-center justify-center rounded-xl bg-black/45 border border-white/12 active:scale-95 transition-transform text-[#e8b84a]"
+                className="h-12 w-12 rounded-xl border-[3px] border-[#b94617] bg-linear-to-b from-[#ffbd4a] to-[#b85b19] text-white shadow-[0_4px_0_#6e2a11,0_7px_12px_rgba(0,0,0,0.4)] active:translate-y-0.5"
                 aria-label="Menu"
               >
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .55.22 1.05.59 1.41.37.37.86.59 1.41.59H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                <svg viewBox="0 0 24 24" className="m-auto h-8 w-8" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" aria-hidden>
+                  <path d="M5 7h14M5 12h14M5 17h14" />
                 </svg>
               </button>
             </DropdownMenu.Trigger>
@@ -535,11 +560,13 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
+          <div className="rounded-lg border-2 border-[#b94617] bg-linear-to-b from-[#ffca54] to-[#d94818] px-1.5 py-1 shadow-[0_3px_0_#6e2a11]">
+            <ScreenRecorder gameId={game.id} iconSrc="/game/icons/record.png" />
+          </div>
         </div>
       </header>
 
-      {/* ── Turn hint ── */}
-      <p className="text-center text-xs font-semibold text-white/70 tracking-wide px-4 py-1 shrink-0">
+      <p className="relative z-10 text-center text-xs font-semibold text-white/75 tracking-wide px-4 py-1 shrink-0">
         {turnHint}
       </p>
 
@@ -552,10 +579,10 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
       />
 
       {/* ── Main area: players + board ── */}
-      <div className="flex-1 flex flex-col min-h-0 items-center justify-center gap-2 px-2 max-w-3xl mx-auto w-full">
+      <div className="relative z-10 flex-1 flex flex-col min-h-0 items-center justify-center gap-2 px-3 max-w-[560px] mx-auto w-full">
 
         {topPlayersList.length > 0 && (
-          <div className="flex justify-center gap-2 flex-wrap w-full">
+          <div className="grid grid-cols-2 gap-2 w-full">
             {topPlayersList.map((player) => (
               <PlayerCard
                 key={player.userId}
@@ -570,7 +597,7 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
           </div>
         )}
 
-        <div className="flex items-center justify-center w-full">
+        <div className="flex items-center justify-center w-full my-1">
           <LudoBoard
             gameState={gameState}
             currentUserId={currentUserId}
@@ -581,7 +608,7 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
         </div>
 
         {bottomPlayersList.length > 0 && (
-          <div className="flex justify-center gap-2 flex-wrap w-full">
+          <div className="grid grid-cols-2 gap-2 w-full">
             {bottomPlayersList.map((player) => (
               <PlayerCard
                 key={player.userId}
@@ -597,22 +624,29 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
         )}
       </div>
 
-      {/* ── Bottom bar (single row, no duplicated icons) ── */}
+      {/* Bottom control dock */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-30 grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 pb-[calc(0.6rem+env(safe-area-inset-bottom))] pt-2 border-t border-white/8"
-        style={{ background: "var(--game-bottom-bar)" }}
+        className="fixed bottom-4 left-1/2 z-30 grid w-[min(92vw,420px)] -translate-x-1/2 grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-[1.65rem] border-[3px] border-[#f2a51e] bg-white px-4 py-2 shadow-[0_6px_0_#a84a13,0_12px_24px_rgba(0,0,0,0.45)]"
       >
-        {/* Left: pot label */}
-        <div className="flex flex-col gap-1 min-w-0">
-          <div className="text-[10px] md:text-xs text-white/65 leading-tight truncate">
-            {potLabel}
-          </div>
-          <ScreenRecorder gameId={game.id} iconSrc="/game/icons/record.png" />
+        <div className="flex items-center gap-2 justify-start">
+          <VideoCall
+            gameId={game.id}
+            userId={currentUserId}
+            compact
+            onLocalVideoChange={setLocalVideo}
+            players={
+              game.players?.map((p) => ({
+                id: p.id,
+                userId: p.userId,
+                username: p.user?.username,
+              })) || []
+            }
+          />
         </div>
 
-        {/* Center: dice */}
-        <div className="flex justify-center items-center">
+        <div className="relative -my-8 flex h-24 w-24 items-center justify-center rounded-full border-[6px] border-[#ffc32d] bg-linear-to-b from-[#ef2a22] to-[#a80f13] shadow-[0_6px_0_#701012,0_10px_20px_rgba(0,0,0,0.5)]">
           <Dice
+            variant="lacquer"
             value={
               gameState.gameMode === "RUSH"
                 ? currentPlayer?.mustMove || currentPlayer?.hasRolled
@@ -633,21 +667,11 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
           />
         </div>
 
-        {/* Right: video controls only */}
-        <div className="flex justify-end items-center">
-          <VideoCall
-            gameId={game.id}
-            userId={currentUserId}
-            compact
-            onLocalVideoChange={setLocalVideo}
-            players={
-              game.players?.map((p: any) => ({
-                id: p.id,
-                userId: p.userId,
-                username: p.user?.username,
-              })) || []
-            }
-          />
+        <div className="flex min-w-0 items-center justify-end gap-1 text-[#9f2b21]" title={potLabel}>
+          <span className="hidden text-xs font-semibold sm:inline">coin</span>
+          <span className="text-3xl font-serif leading-none">
+            {String(gameState.players.length)}
+          </span>
         </div>
       </div>
     </div>

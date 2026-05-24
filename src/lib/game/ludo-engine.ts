@@ -1,6 +1,14 @@
 export type PlayerColor = "RED" | "BLUE" | "GREEN" | "YELLOW";
 export type GameModeType = "CLASSIC" | "RUSH";
 
+import {
+  FINISH_PROGRESS,
+  OUTER_TRACK_LENGTH,
+  SAFE_OUTER_TRACK_INDICES,
+  outerIndexToPathPosition,
+  pathPositionToOuterIndex,
+} from "./ludo-track-cells";
+
 export interface GamePiece {
   id: number;
   position: number;
@@ -24,6 +32,7 @@ export interface Player {
 }
 
 export interface LudoGameState {
+  positionModel?: "COLOR_PROGRESS_V1";
   players: Player[];
   currentTurn: number;
   diceValue: number | null;
@@ -40,37 +49,7 @@ export interface LudoGameState {
   } | null;
 }
 
-const COLOR_PATHS: Record<PlayerColor, number[]> = {
-  RED: [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
-  ],
-  BLUE: [
-    13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-    32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
-    51, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
-  ],
-  GREEN: [
-    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-    45, 46, 47, 48, 49, 50, 51, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
-    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-  ],
-  YELLOW: [
-    39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 0, 1, 2, 3, 4, 5, 6, 7,
-    8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-    27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
-  ],
-};
-
-const SAFE_POSITIONS = [1, 9, 14, 22, 27, 35, 40, 48];
-
-const START_POSITIONS: Record<PlayerColor, number> = {
-  RED: 0,
-  BLUE: 13,
-  GREEN: 26,
-  YELLOW: 39,
-};
+const START_PROGRESS = 0;
 
 export function normalizeGameState(raw: unknown): LudoGameState {
   const s = raw as Partial<LudoGameState> & {
@@ -79,8 +58,20 @@ export function normalizeGameState(raw: unknown): LudoGameState {
   };
   const gameMode: GameModeType =
     s.gameMode === "RUSH" ? "RUSH" : "CLASSIC";
+  const isModernPositionModel = s.positionModel === "COLOR_PROGRESS_V1";
   const players = (s.players || []).map((p: Player) => ({
     ...p,
+    pieces: (p.pieces || []).map((piece) => ({
+      ...piece,
+      position:
+        !isModernPositionModel &&
+        !piece.isHome &&
+        !piece.isFinished &&
+        piece.position >= 0 &&
+        piece.position < OUTER_TRACK_LENGTH
+          ? outerIndexToPathPosition(p.color, piece.position) ?? piece.position
+          : piece.position,
+    })),
     diceValue:
       typeof p.diceValue === "number" ? p.diceValue : null,
     hasRolled: !!p.hasRolled,
@@ -94,6 +85,7 @@ export function normalizeGameState(raw: unknown): LudoGameState {
             p.canMove,
   }));
   return {
+    positionModel: "COLOR_PROGRESS_V1",
     players,
     currentTurn: typeof s.currentTurn === "number" ? s.currentTurn : 0,
     diceValue:
@@ -157,6 +149,7 @@ export class LudoEngine {
     }));
 
     return {
+      positionModel: "COLOR_PROGRESS_V1",
       players: gamePlayers,
       currentTurn: 0,
       diceValue: null,
@@ -211,17 +204,10 @@ export class LudoEngine {
   }
 
   private canPlayerMove(player: Player, diceValue: number): boolean {
-    if (diceValue === 6) return true;
     return player.pieces.some((piece) => {
       if (piece.isHome && diceValue === 6) return true;
       if (!piece.isHome && !piece.isFinished) {
-        return (
-          this.calculateNewPosition(
-            player.color,
-            piece.position,
-            diceValue
-          ) !== null
-        );
+        return this.calculateNewPosition(piece.position, diceValue) !== null;
       }
       return false;
     });
@@ -271,16 +257,12 @@ export class LudoEngine {
 
     if (piece.isHome && diceValue === 6) {
       piece.isHome = false;
-      piece.position = START_POSITIONS[player.color];
+      piece.position = START_PROGRESS;
     } else if (!piece.isHome && !piece.isFinished) {
-      const newPosition = this.calculateNewPosition(
-        player.color,
-        piece.position,
-        diceValue
-      );
+      const newPosition = this.calculateNewPosition(piece.position, diceValue);
       if (newPosition === null) throw new Error("Invalid move");
       piece.position = newPosition;
-      if (this.isPieceFinished(player.color, newPosition)) {
+      if (this.isPieceFinished(newPosition)) {
         piece.isFinished = true;
         piece.position = 100 + piece.id;
       }
@@ -308,33 +290,43 @@ export class LudoEngine {
   }
 
   private calculateNewPosition(
-    color: PlayerColor,
     currentPosition: number,
     diceValue: number
   ): number | null {
     if (currentPosition === -1) return null;
-    const path = COLOR_PATHS[color];
-    const currentIndex = path.indexOf(currentPosition);
-    if (currentIndex === -1) return null;
-    const newIndex = currentIndex + diceValue;
-    if (newIndex >= path.length) return null;
-    return path[newIndex];
+    if (currentPosition < 0 || currentPosition >= FINISH_PROGRESS) return null;
+    const nextPosition = currentPosition + diceValue;
+    if (nextPosition > FINISH_PROGRESS) return null;
+    return nextPosition;
   }
 
-  private isPieceFinished(color: PlayerColor, position: number): boolean {
-    const path = COLOR_PATHS[color];
-    return position === path[path.length - 1];
+  private isPieceFinished(position: number): boolean {
+    return position === FINISH_PROGRESS;
   }
 
   private checkCaptures(player: Player, movedPiece: GamePiece): void {
+    const movedOuterIndex = pathPositionToOuterIndex(
+      player.color,
+      movedPiece.position
+    );
+    if (
+      movedOuterIndex === null ||
+      SAFE_OUTER_TRACK_INDICES.has(movedOuterIndex)
+    ) {
+      return;
+    }
+
     this.state.players.forEach((opponent) => {
       if (opponent.id === player.id) return;
       opponent.pieces.forEach((opponentPiece) => {
+        const opponentOuterIndex = pathPositionToOuterIndex(
+          opponent.color,
+          opponentPiece.position
+        );
         if (
           !opponentPiece.isHome &&
           !opponentPiece.isFinished &&
-          opponentPiece.position === movedPiece.position &&
-          !SAFE_POSITIONS.includes(movedPiece.position)
+          opponentOuterIndex === movedOuterIndex
         ) {
           opponentPiece.isHome = true;
           opponentPiece.position = -1;
@@ -418,11 +410,7 @@ export class LudoEngine {
       if (piece.isHome && diceValue === 6) {
         availablePieces.push(piece.id);
       } else if (!piece.isHome && !piece.isFinished) {
-        const newPosition = this.calculateNewPosition(
-          player.color,
-          piece.position,
-          diceValue
-        );
+        const newPosition = this.calculateNewPosition(piece.position, diceValue);
         if (newPosition !== null) availablePieces.push(piece.id);
       }
     });

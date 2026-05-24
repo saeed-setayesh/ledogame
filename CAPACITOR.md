@@ -96,7 +96,13 @@ npm run cap:open:ios
 
 ## Troubleshooting
 
+- **Black screen on Android** → almost always **`CAPACITOR_SERVER_URL` was not baked into the build**. The shell only ships an empty `cap/www` placeholder; it must load your deployed site. Fix:
+  1. Set `CAPACITOR_SERVER_URL=https://ludino.net` (or your LAN IP for dev) in **`.env`**
+  2. Run **`npm run cap:sync`** (loads `.env`, opens **`/auth/signin`** on launch)
+  3. **Rebuild** the APK in Android Studio (Build → Rebuild / new release bundle)
+  4. Confirm `android/app/src/main/assets/capacitor.config.json` contains `"server": { "url": "https://…/auth/signin" }`
+- **Native UX** — status bar + nav bar hidden (immersive); signed-out users go straight to **login/signup**, not `/landing`. Deploy web changes to your server URL before testing the APK.
 - **Gradle: Java 11** → point `JAVA_HOME` to **JDK 17+**.
 - **CocoaPods not installed** → `brew install cocoapods`.
 - **`npx cap` requires Node 22** → you have Capacitor 8 CLI; downgrade to **`@capacitor/cli@7.6.5`** as in `package.json`.
-- Blank WebView → phone cannot reach `CAPACITOR_SERVER_URL` (firewall, wrong IP, or HTTP blocked on device).
+- **Blank WebView after sync** → phone cannot reach `CAPACITOR_SERVER_URL` (firewall, wrong IP, or HTTP blocked on device).

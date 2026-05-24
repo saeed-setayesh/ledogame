@@ -18,6 +18,7 @@ export default function Dice({
   value,
   onRoll,
   disabled,
+  variant = "white",
   compact,
   label,
 }: DiceProps) {
@@ -64,27 +65,33 @@ export default function Dice({
     const prev = prevValueRef.current;
     prevValueRef.current = value;
     if (prev === undefined) {
-      setDisplayValue(value ?? null);
       return;
     }
     if (value === prev) return;
 
     if (value === null) {
       clearSpinTimers();
-      setIsRolling(false);
-      setDisplayValue(null);
-      return;
+      const resetTimer = setTimeout(() => {
+        setIsRolling(false);
+        setDisplayValue(null);
+      }, 0);
+      return () => clearTimeout(resetTimer);
     }
 
     clearSpinTimers();
-    setIsRolling(true);
-    intervalRef.current = setInterval(() => {
-      setDisplayValue(Math.floor(Math.random() * 6) + 1);
-    }, 85);
-    settleRef.current = setTimeout(() => {
-      finishSpin(value);
-    }, 720);
-    return clearSpinTimers;
+    const startTimer = setTimeout(() => {
+      setIsRolling(true);
+      intervalRef.current = setInterval(() => {
+        setDisplayValue(Math.floor(Math.random() * 6) + 1);
+      }, 85);
+      settleRef.current = setTimeout(() => {
+        finishSpin(value);
+      }, 720);
+    }, 0);
+    return () => {
+      clearTimeout(startTimer);
+      clearSpinTimers();
+    };
   }, [value, clearSpinTimers, finishSpin]);
 
   useEffect(() => () => clearSpinTimers(), [clearSpinTimers]);
@@ -101,9 +108,58 @@ export default function Dice({
     ? "w-14 h-14 md:w-16 md:h-16"
     : "w-[4.5rem] h-[4.5rem] md:w-20 md:h-20";
 
+  const pipsByFace: Record<number, Array<[number, number]>> = {
+    1: [[50, 50]],
+    2: [
+      [30, 30],
+      [70, 70],
+    ],
+    3: [
+      [30, 30],
+      [50, 50],
+      [70, 70],
+    ],
+    4: [
+      [30, 30],
+      [70, 30],
+      [30, 70],
+      [70, 70],
+    ],
+    5: [
+      [30, 30],
+      [70, 30],
+      [50, 50],
+      [30, 70],
+      [70, 70],
+    ],
+    6: [
+      [30, 27],
+      [70, 27],
+      [30, 50],
+      [70, 50],
+      [30, 73],
+      [70, 73],
+    ],
+  };
+
   const inner = (
     <div className={cn("relative flex items-center justify-center", containerSize)}>
-      {face != null ? (
+      {variant === "lacquer" ? (
+        <div
+          className={cn(
+            "relative h-14 w-14 rounded-2xl bg-linear-to-b from-[#f2f2ee] to-[#d6d6d3] shadow-[inset_0_2px_5px_rgba(255,255,255,0.85),inset_0_-4px_8px_rgba(0,0,0,0.18),0_4px_8px_rgba(0,0,0,0.35)]",
+            isRolling && "animate-dice-roll-infinite"
+          )}
+        >
+          {(pipsByFace[face ?? 6] ?? pipsByFace[6]).map(([x, y], i) => (
+            <span
+              key={`${x}-${y}-${i}`}
+              className="absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#444] shadow-inner"
+              style={{ left: `${x}%`, top: `${y}%` }}
+            />
+          ))}
+        </div>
+      ) : face != null ? (
         <Image
           src={`/game/dice/${face}.png`}
           alt={String(face)}

@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { PlayerColor } from "@/lib/game/ludo-engine";
-import { LUDO_TRACK_CELLS } from "@/lib/game/ludo-track-cells";
+import { getCellForPathPosition } from "@/lib/game/ludo-track-cells";
 import Image from "next/image";
 import React from "react";
 
@@ -18,12 +18,11 @@ interface GamePieceProps {
 }
 
 /**
- * Visual board: `public/game/board.webp` (from your `files/Bord/bord-0۱.png`).
- * The wooden frame eats ~10.8% on each side of the image; the 15×15 logic
- * grid is mapped onto the inner playable square only.
+ * Visual board is generated as a real 15x15 grid in `LudoBoard.tsx`.
+ * Pieces use the same inner board inset so every position maps to a cell.
  */
 const GRID = 15;
-const PLAY_INSET = 0.108;
+const PLAY_INSET = 0.025;
 const PLAY_SCALE = 1 - 2 * PLAY_INSET;
 
 const PIECE_SRC: Record<PlayerColor, string> = {
@@ -41,43 +40,45 @@ function gridToPercent(gx: number, gy: number): React.CSSProperties {
 }
 
 /**
- * 2×2 home slot centers in the 15×15 logic grid.
- * Each colored quadrant spans cells (0–5) on its side; the white nest centers
- * around the quadrant midpoint. Centering 4 pieces around (3, 3) / (12, 3) /
- * (3, 12) / (12, 12) puts them squarely inside the home circle.
+ * 2x2 home slot centers in the 15x15 Illustrator grid. These are fractional
+ * grid coordinates for the inner white nests, not outer track cells.
  */
 const HOME_GRID: Record<PlayerColor, readonly [number, number][]> = {
   BLUE: [
-    [2, 2],
-    [4, 2],
-    [2, 4],
-    [4, 4],
+    [2.25, 2.25],
+    [3.75, 2.25],
+    [2.25, 3.75],
+    [3.75, 3.75],
   ],
   GREEN: [
-    [11, 2],
-    [13, 2],
-    [11, 4],
-    [13, 4],
+    [11.25, 2.25],
+    [12.75, 2.25],
+    [11.25, 3.75],
+    [12.75, 3.75],
   ],
   RED: [
-    [2, 11],
-    [4, 11],
-    [2, 13],
-    [4, 13],
+    [2.25, 11.25],
+    [3.75, 11.25],
+    [2.25, 12.75],
+    [3.75, 12.75],
   ],
   YELLOW: [
-    [11, 11],
-    [13, 11],
-    [11, 13],
-    [13, 13],
+    [11.25, 11.25],
+    [12.75, 11.25],
+    [11.25, 12.75],
+    [12.75, 12.75],
   ],
 };
 
-function getBoardPosition(position: number): React.CSSProperties {
-  if (position < 0 || position > 51) {
+function getBoardPosition(
+  color: PlayerColor,
+  position: number
+): React.CSSProperties {
+  const cell = getCellForPathPosition(color, position);
+  if (!cell) {
     return { left: "50%", top: "50%" };
   }
-  const [row, col] = LUDO_TRACK_CELLS[position];
+  const [row, col] = cell;
   const gx = (col + 0.5) / GRID;
   const gy = (row + 0.5) / GRID;
   return gridToPercent(gx, gy);
@@ -104,7 +105,9 @@ export default function GamePiece({
 }: GamePieceProps) {
   if (isFinished) return null;
 
-  const pos = isHome ? getHomePosition(color, pieceId) : getBoardPosition(position);
+  const pos = isHome
+    ? getHomePosition(color, pieceId)
+    : getBoardPosition(color, position);
   const pieceWidth = isHome ? PIECE_W_HOME : PIECE_W_TRACK;
 
   return (

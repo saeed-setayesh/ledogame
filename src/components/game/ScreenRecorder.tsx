@@ -16,7 +16,6 @@ export default function ScreenRecorder({
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(
     null
   );
-  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
 
   const startRecording = async () => {
     try {
@@ -40,7 +39,6 @@ export default function ScreenRecorder({
 
       recorder.onstop = () => {
         const blob = new Blob(chunks, { type: "video/webm" });
-        setRecordedChunks(chunks);
         downloadRecording(blob);
       };
 
@@ -73,40 +71,14 @@ export default function ScreenRecorder({
     URL.revokeObjectURL(url);
   };
 
-  const shareToSocial = async () => {
-    if (recordedChunks.length === 0) {
-      alert("No recording available. Please record first.");
-      return;
-    }
-
-    const blob = new Blob(recordedChunks, { type: "video/webm" });
-    const file = new File([blob], `ludo-game-${gameId}.webm`, {
-      type: "video/webm",
-    });
-
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: "Check out my Ludo game!",
-          text: "I just played an amazing game of Ludo!",
-          files: [file],
-        });
-      } catch (error) {
-        console.error("Error sharing:", error);
-      }
-    } else {
-      alert("Sharing not supported. Please download and share manually.");
-    }
-  };
-
   return (
     <button
       type="button"
       onClick={recording ? stopRecording : startRecording}
       className={cn(
-        "min-h-10 min-w-10 h-10 w-10 rounded-lg flex items-center justify-center",
+        "min-h-8 min-w-8 h-8 w-8 rounded-md flex items-center justify-center",
         "transition-all duration-300 hover:scale-105 active:scale-95",
-        "border border-amber-500/35 bg-black/35 backdrop-blur-sm",
+        "bg-transparent",
         recording && "ring-1 ring-red-500/70 animate-pulse"
       )}
       title={recording ? "Stop recording" : "Record screen"}
@@ -115,7 +87,7 @@ export default function ScreenRecorder({
         <span className="w-4 h-4 bg-red-500 rounded-sm" />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={iconSrc} alt="" className="w-6 h-6 object-contain" />
+        <img src={iconSrc} alt="" className="w-7 h-7 object-contain" />
       )}
     </button>
   );
