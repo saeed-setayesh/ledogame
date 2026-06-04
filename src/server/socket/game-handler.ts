@@ -7,8 +7,11 @@ import {
   createGameState,
 } from "@/lib/game/game-state";
 import { prisma } from "@/lib/prisma";
-import { deductEntryFee, processPayout } from "@/lib/blockchain/wallet";
 import { AIPlayer } from "@/lib/game/ai-player";
+import {
+  collectEntryFeesAndStartGame,
+  settleGameWinner,
+} from "@/lib/wallet/game-payments";
 
 export function gameHandlers(socket: Socket, io: SocketIOServer) {
   // Join game room
@@ -520,18 +523,12 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
     }
   });
 
-  // Start game
-  socket.on("game:start", async ({ gameId }) => {
+  // Start game (creator only; collects entry fees atomically)
+  socket.on("game:start", async ({ gameId, userId }) => {
     try {
       const game = await prisma.game.findUnique({
         where: { id: gameId },
-        include: {
-          players: {
-            include: {
-              user: true,
-            },
-          },
-        },
+        include: { players: true },
       });
 
       if (!game) {
@@ -539,29 +536,21 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         return;
       }
 
-      // Deduct entry fees
-      for (const player of game.players) {
-        await deductEntryFee(
-          player.userId,
-          parseFloat(game.entryFee.toString()),
-          gameId
-        );
+      if (userId && game.creatorId !== userId) {
+        socket.emit("game:error", {
+          message: "Only the game creator can start the game",
+        });
+        return;
       }
 
-      // Update game status
-      await prisma.game.update({
-        where: { id: gameId },
-        data: {
-          status: "ACTIVE",
-          startedAt: new Date(),
-          totalPot: game.entryFee * BigInt(game.players.length),
-        },
-      });
+      if (game.status !== "WAITING") {
+        socket.emit("game:error", { message: "Game cannot be started" });
+        return;
+      }
 
-      // Notify all players
+      await collectEntryFeesAndStartGame(gameId);
+
       io.to(`game:${gameId}`).emit("game:started", { gameId });
-
-      // Check if first player is AI and process their turn
       await processAITurn(gameId, io);
     } catch (error: any) {
       socket.emit("game:error", { message: error.message });
@@ -776,80 +765,5 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
 }
 
 async function handleGameFinish(gameId: string, winnerUserId: string) {
-  const game = await prisma.game.findUnique({
-    where: { id: gameId },
-    include: {
-      players: true,
-    },
-  });
-
-  if (!game) return;
-
-  // Calculate commission (17%)
-  const totalPot = parseFloat(game.totalPot.toString());
-  const commission = totalPot * 0.17;
-  const payout = totalPot - commission;
-
-  // Update game
-  await prisma.game.update({
-    where: { id: gameId },
-    data: {
-      status: "FINISHED",
-      finishedAt: new Date(),
-      winnerId: winnerUserId,
-      commissionAmount: commission,
-    },
-  });
-
-  // Update winner player
-  await prisma.gamePlayer.updateMany({
-    where: {
-      gameId,
-      userId: winnerUserId,
-    },
-    data: {
-      isWinner: true,
-      payoutAmount: payout,
-      status: "FINISHED",
-    },
-  });
-
-  // Process payout
-  await processPayout(winnerUserId, payout, gameId);
-
-  // Award XP to winner
-  const winner = await prisma.user.findUnique({
-    where: { id: winnerUserId },
-  });
-
-  if (winner) {
-    const newXP = winner.xp + 100;
-    const newLevel = Math.floor(newXP / 1000) + 1;
-
-    await prisma.user.update({
-      where: { id: winnerUserId },
-      data: {
-        xp: newXP,
-        level: newLevel,
-        totalWins: winner.totalWins + 1,
-        totalGames: winner.totalGames + 1,
-      },
-    });
-  }
-
-  // Update other players' stats
-  await prisma.user.updateMany({
-    where: {
-      id: {
-        in: game.players
-          .filter((p) => p.userId !== winnerUserId)
-          .map((p) => p.userId),
-      },
-    },
-    data: {
-      totalGames: {
-        increment: 1,
-      },
-    },
-  });
+  await settleGameWinner(gameId, winnerUserId);
 }

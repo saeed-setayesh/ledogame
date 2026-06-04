@@ -13,6 +13,10 @@ interface WalletDashboardProps {
 export default function WalletDashboard({ userId }: WalletDashboardProps) {
   const [balance, setBalance] = useState("0");
   const [address, setAddress] = useState<string | null>(null);
+  const [networkLabel, setNetworkLabel] = useState<string>("TRON");
+  const [usdtContract, setUsdtContract] = useState<string | undefined>();
+  const [isTestnet, setIsTestnet] = useState(false);
+  const [onChainUsdt, setOnChainUsdt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -26,10 +30,18 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
 
   const fetchBalance = async () => {
     try {
-      const response = await fetch("/api/wallet/balance");
+      const response = await fetch("/api/wallet/balance?sync=true");
       const data = await response.json();
+      if (data.error) {
+        console.error(data.error);
+        return;
+      }
       setBalance(data.balance || "0");
       setAddress(data.address);
+      setNetworkLabel(data.networkLabel || "TRON");
+      setUsdtContract(data.usdtContract);
+      setIsTestnet(!!data.isTestnet);
+      setOnChainUsdt(data.onChainUsdt ?? null);
     } catch (error) {
       console.error("Failed to fetch balance:", error);
     } finally {
@@ -112,12 +124,19 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
           </div>
           <div className="flex items-center gap-2 text-sm text-foreground/70">
             <TrendingUp className="w-4 h-4" />
-            <span>Available for withdrawal</span>
+            <span>Platform balance — play & withdraw</span>
           </div>
+          {onChainUsdt !== null && (
+            <p className="text-xs text-foreground/50 mt-2">
+              On deposit address (not yet credited): {formatUSDT(onChainUsdt)}{" "}
+              USDT — use Scan for deposits
+            </p>
+          )}
+          <p className="text-xs text-foreground/50 mt-1">{networkLabel}</p>
           {address && (
             <div className="mt-4 pt-4 border-t border-border/50">
               <div className="text-xs text-foreground/50 mb-1">
-                Wallet Address
+                Tron deposit address
               </div>
               <div className="font-mono text-xs md:text-sm break-all text-foreground/70">
                 {address}
@@ -129,7 +148,13 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
 
       {/* Deposit Section */}
       {address && (
-        <DepositSection address={address} onDepositSuccess={fetchBalance} />
+        <DepositSection
+          address={address}
+          networkLabel={networkLabel}
+          usdtContract={usdtContract}
+          isTestnet={isTestnet}
+          onDepositSuccess={fetchBalance}
+        />
       )}
 
       {/* Withdraw Section */}
@@ -141,7 +166,7 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2 text-foreground/70">
-              BEP20 address (BNB Smart Chain)
+              Tron address (TRC-20)
             </label>
             <input
               type="text"
@@ -151,7 +176,7 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
                 setWithdrawError(null);
               }}
               className="w-full px-4 py-2 bg-background border border-border rounded-lg min-h-[44px] focus:outline-none focus:ring-2 focus:ring-primary/50"
-              placeholder="0x…"
+              placeholder="T…"
             />
           </div>
           <div>

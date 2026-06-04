@@ -1,82 +1,142 @@
 "use client";
 
 import { useState } from "react";
-import { Wallet, QrCode, Copy, ArrowDownCircle, Check } from "lucide-react";
+import {
+  Wallet,
+  QrCode,
+  Copy,
+  RefreshCw,
+  Check,
+  ExternalLink,
+} from "lucide-react";
 import { generateQRCodeData } from "@/lib/wallet/mock-wallet";
 
 interface DepositSectionProps {
   address: string;
+  networkLabel?: string;
+  usdtContract?: string;
+  isTestnet?: boolean;
   onDepositSuccess?: () => void;
 }
 
 export default function DepositSection({
   address,
+  networkLabel = "TRON",
+  usdtContract,
+  isTestnet,
   onDepositSuccess,
 }: DepositSectionProps) {
   const [copied, setCopied] = useState(false);
-  const [depositAmount, setDepositAmount] = useState("");
-  const [depositing, setDepositing] = useState(false);
+  const [txHash, setTxHash] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
+
+  const explorerBase = isTestnet
+    ? "https://shasta.tronscan.org"
+    : "https://tronscan.org";
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(address);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
-      console.error("Failed to copy:", error);
+    } catch (err) {
+      console.error("Failed to copy:", err);
     }
   };
 
   const handleGenerateQR = () => {
-    const qrUrl = generateQRCodeData(address);
-    setQrCodeUrl(qrUrl);
+    setQrCodeUrl(generateQRCodeData(address));
   };
 
-  const handleMockDeposit = async () => {
-    if (!depositAmount || parseFloat(depositAmount) <= 0) {
-      alert("Please enter a valid amount");
+  const handleConfirmDeposit = async () => {
+    if (!txHash.trim()) {
+      setError("Enter the transaction id from your wallet or Tronscan");
       return;
     }
-
-    setDepositing(true);
+    setError(null);
+    setMessage(null);
+    setConfirming(true);
     try {
       const response = await fetch("/api/wallet/deposit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: parseFloat(depositAmount),
-          isMock: true,
-        }),
+        body: JSON.stringify({ txHash: txHash.trim() }),
       });
-
       const data = await response.json();
       if (data.success) {
-        alert(`Deposit successful! New balance: ${data.newBalance} USDT`);
-        setDepositAmount("");
+        setMessage(
+          `Credited ${data.amount} USDT. Balance: ${data.newBalance} USDT`
+        );
+        setTxHash("");
         onDepositSuccess?.();
       } else {
-        alert(data.error || "Deposit failed");
+        setError(data.error || "Deposit confirmation failed");
       }
-    } catch (error) {
-      console.error("Deposit error:", error);
-      alert("Deposit failed");
+    } catch (err) {
+      console.error(err);
+      setError("Deposit confirmation failed");
     } finally {
-      setDepositing(false);
+      setConfirming(false);
+    }
+  };
+
+  const handleSyncDeposits = async () => {
+    setError(null);
+    setMessage(null);
+    setSyncing(true);
+    try {
+      const response = await fetch("/api/wallet/deposit/sync", {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (data.success) {
+        if (data.credited > 0) {
+          setMessage(
+            `Found ${data.transactions?.length || 0} deposit(s), +${data.credited} USDT. Balance: ${data.balance} USDT`
+          );
+          onDepositSuccess?.();
+        } else {
+          setMessage("No new deposits found yet. Send USDT and try again.");
+        }
+      } else {
+        setError(data.error || "Sync failed");
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Sync failed");
+    } finally {
+      setSyncing(false);
     }
   };
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 md:p-6 space-y-4">
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2 mb-2">
         <Wallet className="w-5 h-5 text-primary" />
-        <h3 className="text-xl font-semibold">Deposit USDT</h3>
+        <h3 className="text-xl font-semibold">Deposit USDT (TRC-20)</h3>
       </div>
+
+      <p className="text-sm text-foreground/70">
+        Send <strong>USDT on TRON ({networkLabel})</strong> to your personal
+        deposit address below. After it confirms, click{" "}
+        <strong>Scan for deposits</strong> or paste the transaction id.
+      </p>
+
+      {isTestnet && (
+        <p className="text-xs text-amber-600/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+          Testnet mode: use Shasta USDT only. Get test TRX/USDT from a Shasta
+          faucet before sending.
+        </p>
+      )}
 
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-2 text-foreground/70">
-            Your USDT deposit address (BEP20 — BNB Smart Chain)
+            Your Tron deposit address
           </label>
           <div className="flex gap-2">
             <input
@@ -86,6 +146,7 @@ export default function DepositSection({
               className="flex-1 px-4 py-2 bg-background border border-border rounded-lg font-mono text-sm"
             />
             <button
+              type="button"
               onClick={handleCopy}
               className="px-4 py-2 bg-primary/10 hover:bg-primary/20 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
               aria-label="Copy address"
@@ -97,61 +158,88 @@ export default function DepositSection({
               )}
             </button>
           </div>
+          {usdtContract && (
+            <p className="text-xs text-foreground/50 mt-2 font-mono break-all">
+              USDT contract: {usdtContract}
+            </p>
+          )}
         </div>
 
-        <div>
+        <div className="flex flex-col sm:flex-row gap-2">
           <button
+            type="button"
             onClick={handleGenerateQR}
-            className="w-full py-3 bg-background border border-border rounded-lg font-semibold hover:bg-background/80 transition-colors flex items-center justify-center gap-2 min-h-[44px]"
+            className="flex-1 py-3 bg-background border border-border rounded-lg font-semibold hover:bg-background/80 transition-colors flex items-center justify-center gap-2 min-h-[44px]"
           >
             <QrCode className="w-5 h-5" />
             {qrCodeUrl ? "Hide QR Code" : "Show QR Code"}
           </button>
-          {qrCodeUrl && (
-            <div className="mt-4 flex justify-center">
-              <img
-                src={qrCodeUrl}
-                alt="Deposit QR Code"
-                className="w-48 h-48 border border-border rounded-lg p-2 bg-white"
-              />
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={handleSyncDeposits}
+            disabled={syncing}
+            className="flex-1 py-3 bg-primary rounded-lg font-semibold text-white hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2 min-h-[44px]"
+          >
+            <RefreshCw
+              className={`w-5 h-5 ${syncing ? "animate-spin" : ""}`}
+            />
+            {syncing ? "Scanning…" : "Scan for deposits"}
+          </button>
         </div>
 
-        <div className="pt-4 border-t border-border">
-          <label className="block text-sm font-medium mb-2 text-foreground/70">
-            Quick Mock Deposit (Testing)
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="number"
-              value={depositAmount}
-              onChange={(e) => setDepositAmount(e.target.value)}
-              placeholder="0.00"
-              min="0.01"
-              step="0.01"
-              className="flex-1 px-4 py-2 bg-background border border-border rounded-lg min-h-[44px]"
+        {qrCodeUrl && (
+          <div className="flex justify-center">
+            <img
+              src={qrCodeUrl}
+              alt="Deposit QR Code"
+              className="w-48 h-48 border border-border rounded-lg p-2 bg-white"
             />
-            <button
-              onClick={handleMockDeposit}
-              disabled={depositing || !depositAmount}
-              className="px-6 py-2 bg-primary rounded-lg font-semibold text-white hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center gap-2 min-h-[44px]"
-            >
-              {depositing ? (
-                "Processing..."
-              ) : (
-                <>
-                  <ArrowDownCircle className="w-5 h-5" />
-                  Deposit
-                </>
-              )}
-            </button>
           </div>
-          <p className="text-xs text-foreground/50 mt-2">
-            This is a mock deposit for testing. In production, send BEP20 USDT to the
-            address above.
-          </p>
+        )}
+
+        <div className="pt-4 border-t border-border space-y-3">
+          <label className="block text-sm font-medium text-foreground/70">
+            Or confirm with transaction id
+          </label>
+          <input
+            type="text"
+            value={txHash}
+            onChange={(e) => {
+              setTxHash(e.target.value);
+              setError(null);
+            }}
+            placeholder="Paste Tron transaction id"
+            className="w-full px-4 py-2 bg-background border border-border rounded-lg font-mono text-sm min-h-[44px]"
+          />
+          <button
+            type="button"
+            onClick={handleConfirmDeposit}
+            disabled={confirming || !txHash.trim()}
+            className="w-full py-3 bg-secondary rounded-lg font-semibold text-white hover:opacity-90 disabled:opacity-50 min-h-[44px]"
+          >
+            {confirming ? "Confirming…" : "Confirm deposit"}
+          </button>
+          <a
+            href={`${explorerBase}/#/address/${address}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-primary flex items-center gap-1 hover:underline"
+          >
+            <ExternalLink className="w-3 h-3" />
+            View address on Tronscan
+          </a>
         </div>
+
+        {error && (
+          <div className="p-3 bg-danger/10 border border-danger/30 rounded-lg text-sm text-danger">
+            {error}
+          </div>
+        )}
+        {message && (
+          <div className="p-3 bg-success/10 border border-success/30 rounded-lg text-sm text-success">
+            {message}
+          </div>
+        )}
       </div>
     </div>
   );

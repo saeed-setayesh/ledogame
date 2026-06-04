@@ -1,57 +1,51 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-helpers";
-import { syncWalletBalance } from "@/lib/blockchain/wallet";
-import { prisma } from "@/lib/prisma";
-import { generateMockAddress } from "@/lib/wallet/mock-wallet";
+import {
+  getOnChainUsdtBalance,
+  getUserLedgerBalance,
+} from "@/lib/blockchain/wallet";
+import { ensureUserDepositWallet } from "@/lib/wallet/deposit-wallet";
+import { getDepositInstructions } from "@/lib/blockchain/tron-deposits";
+import { getTronNetworkLabel } from "@/lib/blockchain/tron-network";
+import { syncOnChainDeposits } from "@/lib/wallet/sync-deposits";
+import { useRealTronDeposits } from "@/lib/wallet/config";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await requireAuth();
+    const { searchParams } = new URL(request.url);
+    const autoSync = searchParams.get("sync") === "true";
 
-    // Get user from database
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { walletBalance: true, walletAddress: true },
-    });
-
-    // If no real wallet exists, generate and store a mock address
-    if (!dbUser?.walletAddress) {
-      const mockAddress = generateMockAddress();
-
-      // Store the mock address in the database for consistency
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { walletAddress: mockAddress },
-      });
-
-      // Use database balance or default to 100 for new users
-      const balance = dbUser?.walletBalance?.toString() || "100.00";
-
-      return NextResponse.json({
-        balance,
-        address: mockAddress,
-        isMock: true,
-      });
+    if (!useRealTronDeposits()) {
+      return NextResponse.json(
+        { error: "Real Tron wallets are disabled (USE_REAL_TRON_WALLETS=false)" },
+        { status: 503 }
+      );
     }
 
-    // Sync balance from blockchain (only if real wallet exists)
-    try {
-      await syncWalletBalance(user.id);
-    } catch (error) {
-      // If blockchain sync fails, return database balance
-      console.warn("Blockchain sync failed, using database balance:", error);
+    const wallet = await ensureUserDepositWallet(user.id);
+
+    if (autoSync) {
+      await syncOnChainDeposits(user.id);
     }
 
-    // Get updated balance from database
-    const updatedUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { walletBalance: true, walletAddress: true },
-    });
+    const [balance, onChainUsdt] = await Promise.all([
+      getUserLedgerBalance(user.id),
+      getOnChainUsdtBalance(user.id),
+    ]);
+
+    const instructions = getDepositInstructions();
 
     return NextResponse.json({
-      balance: updatedUser?.walletBalance.toString() || "0",
-      address: updatedUser?.walletAddress || null,
+      balance: balance.toString(),
+      address: wallet.address,
+      network: wallet.network,
+      networkLabel: getTronNetworkLabel(),
+      onChainUsdt: onChainUsdt.toString(),
       isMock: false,
+      migratedFromMock: wallet.migratedFromMock,
+      usdtContract: instructions.usdtContract,
+      isTestnet: instructions.isTestnet,
     });
   } catch (error: any) {
     console.error("Balance error:", error);

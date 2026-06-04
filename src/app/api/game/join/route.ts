@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-helpers";
 import { prisma } from "@/lib/prisma";
 import { getGameState, getGameEngine } from "@/lib/game/game-state";
+import { tryAutoStartPaidGame } from "@/lib/wallet/game-payments";
 
 export async function POST(request: Request) {
   try {
@@ -128,20 +129,14 @@ export async function POST(request: Request) {
       // TODO: Add player to engine state
     }
 
-    // Check if game should start
-    const totalPlayers = await prisma.gamePlayer.count({
-      where: { gameId: game.id },
+    const autoStarted = await tryAutoStartPaidGame(game.id);
+    const updatedGame = await prisma.game.findUnique({ where: { id: game.id } });
+
+    return NextResponse.json({
+      game: updatedGame ?? game,
+      playerId: newPlayer.id,
+      autoStarted,
     });
-
-    if (totalPlayers >= game.maxPlayers) {
-      // Game is full, can start
-      await prisma.game.update({
-        where: { id: game.id },
-        data: { status: "ACTIVE" },
-      });
-    }
-
-    return NextResponse.json({ game, playerId: newPlayer.id });
   } catch (error: any) {
     console.error("Join game error:", error);
     return NextResponse.json(

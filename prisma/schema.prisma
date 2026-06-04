@@ -19,8 +19,10 @@ model User {
   xp            Int      @default(0)
   totalGames    Int      @default(0)
   totalWins     Int      @default(0)
-  walletAddress String?  @unique
-  walletBalance Decimal  @default(0) @db.Decimal(18, 6)
+  walletAddress        String?  @unique
+  walletPrivateKeyEnc  String?  @db.Text // AES-256-GCM encrypted Tron private key (custodial deposit wallet)
+  walletNetwork        String? // "mainnet" | "shasta" when wallet was created
+  walletBalance        Decimal  @default(0) @db.Decimal(18, 6)
   avatar        String?
   countryCode   String? // ISO 3166-1 alpha-2 for flag display
   isAdmin       Boolean  @default(false)

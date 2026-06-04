@@ -155,7 +155,7 @@ Players can choose entry fees from 1 to 10 USDT. Matchmaking pairs players with 
 
 ## Commission
 
-17% of the total pot is deducted as commission to the game wallet before winner payout.
+Commission on the pot is set by `COMMISSION_RATE` (percent, default `17`). The house ledger receives a `COMMISSION` transaction; the winner receives the remainder as `PAYOUT` on their platform balance. See `docs/WALLET_PAYMENTS.md`.
 
 ## Level System
 

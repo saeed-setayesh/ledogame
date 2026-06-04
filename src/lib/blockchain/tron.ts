@@ -1,15 +1,17 @@
 import TronWeb from "tronweb"
+import { getTronNetwork } from "./tron-network"
 
 // USDT TRC-20 contract address
-const USDT_CONTRACT_ADDRESS = process.env.TRON_NETWORK === "mainnet"
-  ? "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" // Mainnet USDT
-  : "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf" // Shasta testnet USDT
+const USDT_CONTRACT_ADDRESS =
+  getTronNetwork() === "mainnet"
+    ? "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" // Mainnet USDT
+    : "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf" // Shasta testnet USDT
 
 let tronWeb: TronWeb | null = null
 
 export function getTronWeb(): TronWeb {
   if (!tronWeb) {
-    const network = process.env.TRON_NETWORK || "shasta"
+    const network = getTronNetwork()
     const fullNode = network === "mainnet"
       ? "https://api.trongrid.io"
       : "https://api.shasta.trongrid.io"

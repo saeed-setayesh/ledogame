@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { generateRoomId } from "@/lib/utils";
 import { createGameState } from "@/lib/game/game-state";
 import { getOrCreateAIUsers } from "@/lib/game/ai-user";
+import { AIPlayer } from "@/lib/game/ai-player";
+import { collectEntryFeesAndStartGame } from "@/lib/wallet/game-payments";
 
 export async function POST(request: Request) {
   try {
@@ -157,15 +159,13 @@ export async function POST(request: Request) {
       }))
     );
 
-    // Start game if we have at least 2 players (minimum for Ludo)
-    // In practice mode, always start immediately
     const minPlayers = 2;
-    const shouldStart = practiceMode
-      ? players.length >= minPlayers // Practice mode: start with 2+ players (creator + AI)
-      : players.length >= minPlayers &&
-        (players.length >= finalMaxPlayers || aiCount > 0);
+    const humanCount = players.filter(
+      (p) => !AIPlayer.isAIPlayer(p.userId)
+    ).length;
+    const lobbyFull = players.length >= finalMaxPlayers;
 
-    if (shouldStart) {
+    if (practiceMode && players.length >= minPlayers) {
       await prisma.game.update({
         where: { id: game.id },
         data: {
@@ -174,13 +174,16 @@ export async function POST(request: Request) {
         },
       });
       console.log(
-        `[Game ${game.id}] ${
-          practiceMode ? "Practice mode" : "Game"
-        } started with ${players.length} players (${aiCount} AI)`
+        `[Game ${game.id}] Practice mode started with ${players.length} players`
+      );
+    } else if (!practiceMode && lobbyFull && humanCount >= 2) {
+      await collectEntryFeesAndStartGame(game.id);
+      console.log(
+        `[Game ${game.id}] Paid game started; entry fees collected (${humanCount} humans)`
       );
     } else {
       console.log(
-        `[Game ${game.id}] Game waiting for more players. Current: ${players.length}, Min: ${minPlayers}, Max: ${finalMaxPlayers}`
+        `[Game ${game.id}] Waiting for players. Current: ${players.length}/${finalMaxPlayers}, humans: ${humanCount}`
       );
     }
 
