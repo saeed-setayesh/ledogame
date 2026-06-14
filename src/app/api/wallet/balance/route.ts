@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-helpers";
 import {
-  getOnChainUsdtBalance,
+  getLudinoOnChainUsdtBalance,
   getUserLedgerBalance,
 } from "@/lib/blockchain/wallet";
-import { ensureUserDepositWallet } from "@/lib/wallet/deposit-wallet";
-import { getDepositInstructions } from "@/lib/blockchain/tron-deposits";
-import { getTronNetworkLabel } from "@/lib/blockchain/tron-network";
+import { getDepositInstructions } from "@/lib/blockchain/bsc";
+import { getBscNetworkLabel, getBscScanBaseUrl } from "@/lib/blockchain/bsc-network";
+import { getLudinoWalletInfo } from "@/lib/wallet/ludino-wallet";
 import { syncOnChainDeposits } from "@/lib/wallet/sync-deposits";
-import { useRealTronDeposits } from "@/lib/wallet/config";
 
 export async function GET(request: Request) {
   try {
@@ -16,36 +15,34 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const autoSync = searchParams.get("sync") === "true";
 
-    if (!useRealTronDeposits()) {
-      return NextResponse.json(
-        { error: "Real Tron wallets are disabled (USE_REAL_TRON_WALLETS=false)" },
-        { status: 503 }
-      );
-    }
-
-    const wallet = await ensureUserDepositWallet(user.id);
+    const ludino = getLudinoWalletInfo();
 
     if (autoSync) {
-      await syncOnChainDeposits(user.id);
+      try {
+        await syncOnChainDeposits(user.id);
+      } catch (e) {
+        console.warn("Deposit auto-sync skipped:", e);
+      }
     }
 
     const [balance, onChainUsdt] = await Promise.all([
       getUserLedgerBalance(user.id),
-      getOnChainUsdtBalance(user.id),
+      getLudinoOnChainUsdtBalance(),
     ]);
 
     const instructions = getDepositInstructions();
 
     return NextResponse.json({
       balance: balance.toString(),
-      address: wallet.address,
-      network: wallet.network,
-      networkLabel: getTronNetworkLabel(),
+      address: ludino.address,
+      network: ludino.network,
+      networkLabel: getBscNetworkLabel(),
+      explorerUrl: `${getBscScanBaseUrl()}/address/${ludino.address}`,
       onChainUsdt: onChainUsdt.toString(),
       isMock: false,
-      migratedFromMock: wallet.migratedFromMock,
       usdtContract: instructions.usdtContract,
       isTestnet: instructions.isTestnet,
+      withdrawalsEnabled: ludino.hasPrivateKey,
     });
   } catch (error: any) {
     console.error("Balance error:", error);

@@ -1,15 +1,33 @@
 import { prisma } from "@/lib/prisma";
 import { processDeposit } from "@/lib/blockchain/wallet";
-import { fetchIncomingUsdtTransfers } from "@/lib/blockchain/tron-deposits";
-import { ensureUserDepositWallet } from "@/lib/wallet/deposit-wallet";
+import { fetchIncomingUsdtTransfers } from "@/lib/blockchain/bsc-deposits";
+import { getLudinoUsdtAddress } from "@/lib/wallet/ludino-wallet";
 
-export async function syncOnChainDeposits(userId: string): Promise<{
+/**
+ * Scan BscScan for USDT sent to Ludino wallet.
+ * Optional fromAddress filters to the user's external wallet (stored after first deposit).
+ */
+export async function syncOnChainDeposits(
+  userId: string,
+  fromAddress?: string
+): Promise<{
   credited: number;
   transactions: Array<{ txHash: string; amount: number }>;
 }> {
-  const { address } = await ensureUserDepositWallet(userId);
+  const ludino = getLudinoUsdtAddress();
 
-  const incoming = await fetchIncomingUsdtTransfers(address, 50);
+  let sender = fromAddress?.trim();
+  if (!sender) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { walletAddress: true },
+    });
+    if (user?.walletAddress?.startsWith("0x")) {
+      sender = user.walletAddress;
+    }
+  }
+
+  const incoming = await fetchIncomingUsdtTransfers(ludino, sender, 50);
   const credited: Array<{ txHash: string; amount: number }> = [];
   let total = 0;
 
@@ -24,7 +42,11 @@ export async function syncOnChainDeposits(userId: string): Promise<{
     if (existing) continue;
 
     try {
-      await processDeposit(userId, transfer.transactionId, transfer.amount);
+      await processDeposit(
+        userId,
+        transfer.transactionId,
+        transfer.amount
+      );
       credited.push({
         txHash: transfer.transactionId,
         amount: transfer.amount,

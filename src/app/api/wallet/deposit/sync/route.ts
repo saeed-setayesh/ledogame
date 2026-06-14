@@ -3,11 +3,14 @@ import { requireAuth } from "@/lib/auth-helpers";
 import { getUserLedgerBalance } from "@/lib/blockchain/wallet";
 import { syncOnChainDeposits } from "@/lib/wallet/sync-deposits";
 
-/** Scan TronGrid for incoming USDT and credit any new deposits. */
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const user = await requireAuth();
-    const result = await syncOnChainDeposits(user.id);
+    const body = await request.json().catch(() => ({}));
+    const fromAddress =
+      typeof body.fromAddress === "string" ? body.fromAddress : undefined;
+
+    const result = await syncOnChainDeposits(user.id, fromAddress);
     const balance = await getUserLedgerBalance(user.id);
 
     return NextResponse.json({

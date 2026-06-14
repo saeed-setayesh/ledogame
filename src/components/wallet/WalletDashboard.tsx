@@ -13,9 +13,10 @@ interface WalletDashboardProps {
 export default function WalletDashboard({ userId }: WalletDashboardProps) {
   const [balance, setBalance] = useState("0");
   const [address, setAddress] = useState<string | null>(null);
-  const [networkLabel, setNetworkLabel] = useState<string>("TRON");
+  const [networkLabel, setNetworkLabel] = useState<string>("BNB Smart Chain");
   const [usdtContract, setUsdtContract] = useState<string | undefined>();
   const [isTestnet, setIsTestnet] = useState(false);
+  const [explorerUrl, setExplorerUrl] = useState<string | undefined>();
   const [onChainUsdt, setOnChainUsdt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [withdrawAddress, setWithdrawAddress] = useState("");
@@ -38,10 +39,11 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
       }
       setBalance(data.balance || "0");
       setAddress(data.address);
-      setNetworkLabel(data.networkLabel || "TRON");
+      setNetworkLabel(data.networkLabel || "BNB Smart Chain");
       setUsdtContract(data.usdtContract);
       setIsTestnet(!!data.isTestnet);
       setOnChainUsdt(data.onChainUsdt ?? null);
+      setExplorerUrl(data.explorerUrl);
     } catch (error) {
       console.error("Failed to fetch balance:", error);
     } finally {
@@ -128,15 +130,14 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
           </div>
           {onChainUsdt !== null && (
             <p className="text-xs text-foreground/50 mt-2">
-              On deposit address (not yet credited): {formatUSDT(onChainUsdt)}{" "}
-              USDT — use Scan for deposits
+              Ludino wallet on-chain USDT: {formatUSDT(onChainUsdt)} USDT
             </p>
           )}
           <p className="text-xs text-foreground/50 mt-1">{networkLabel}</p>
           {address && (
             <div className="mt-4 pt-4 border-t border-border/50">
               <div className="text-xs text-foreground/50 mb-1">
-                Tron deposit address
+                Ludino BEP20 deposit address
               </div>
               <div className="font-mono text-xs md:text-sm break-all text-foreground/70">
                 {address}
@@ -153,6 +154,7 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
           networkLabel={networkLabel}
           usdtContract={usdtContract}
           isTestnet={isTestnet}
+          explorerUrl={explorerUrl}
           onDepositSuccess={fetchBalance}
         />
       )}
@@ -166,7 +168,7 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2 text-foreground/70">
-              Tron address (TRC-20)
+              BEP20 address (BNB Smart Chain)
             </label>
             <input
               type="text"

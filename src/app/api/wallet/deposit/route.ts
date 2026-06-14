@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth-helpers";
-import { confirmDepositByTxHash } from "@/lib/blockchain/wallet";
+import { confirmDepositByTxHash, getUserLedgerBalance } from "@/lib/blockchain/wallet";
 import { prisma } from "@/lib/prisma";
 import { Decimal } from "@prisma/client/runtime/library";
 import { allowMockDeposits } from "@/lib/wallet/config";
-import { ensureUserDepositWallet } from "@/lib/wallet/deposit-wallet";
 
 export async function POST(request: Request) {
   try {
@@ -14,7 +13,10 @@ export async function POST(request: Request) {
     if (isMock) {
       if (!allowMockDeposits()) {
         return NextResponse.json(
-          { error: "Mock deposits are disabled. Send real USDT to your Tron deposit address." },
+          {
+            error:
+              "Mock deposits disabled. Send BEP20 USDT to the Ludino wallet on BSC.",
+          },
           { status: 403 }
         );
       }
@@ -66,12 +68,10 @@ export async function POST(request: Request) {
 
     if (!txHash) {
       return NextResponse.json(
-        { error: "Transaction id (txHash) is required" },
+        { error: "Transaction hash is required" },
         { status: 400 }
       );
     }
-
-    await ensureUserDepositWallet(user.id);
 
     const expectedAmount =
       amount !== undefined && amount !== null
@@ -91,16 +91,14 @@ export async function POST(request: Request) {
       expectedAmount
     );
 
-    const newBalance = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { walletBalance: true },
-    });
+    const newBalance = await getUserLedgerBalance(user.id);
 
     return NextResponse.json({
       success: true,
       amount: result.amount,
       txHash: result.txHash,
-      newBalance: newBalance?.walletBalance.toString() || "0",
+      from: result.from,
+      newBalance: newBalance.toString(),
     });
   } catch (error: any) {
     console.error("Deposit error:", error);

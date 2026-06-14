@@ -16,18 +16,21 @@ interface DepositSectionProps {
   networkLabel?: string;
   usdtContract?: string;
   isTestnet?: boolean;
+  explorerUrl?: string;
   onDepositSuccess?: () => void;
 }
 
 export default function DepositSection({
   address,
-  networkLabel = "TRON",
+  networkLabel = "BNB Smart Chain",
   usdtContract,
   isTestnet,
+  explorerUrl,
   onDepositSuccess,
 }: DepositSectionProps) {
   const [copied, setCopied] = useState(false);
   const [txHash, setTxHash] = useState("");
+  const [fromAddress, setFromAddress] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -35,8 +38,8 @@ export default function DepositSection({
   const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
 
   const explorerBase = isTestnet
-    ? "https://shasta.tronscan.org"
-    : "https://tronscan.org";
+    ? "https://testnet.bscscan.com"
+    : "https://bscscan.com";
 
   const handleCopy = async () => {
     try {
@@ -54,7 +57,7 @@ export default function DepositSection({
 
   const handleConfirmDeposit = async () => {
     if (!txHash.trim()) {
-      setError("Enter the transaction id from your wallet or Tronscan");
+      setError("Enter the BscScan transaction hash (0x…)");
       return;
     }
     setError(null);
@@ -91,6 +94,10 @@ export default function DepositSection({
     try {
       const response = await fetch("/api/wallet/deposit/sync", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fromAddress: fromAddress.trim() || undefined,
+        }),
       });
       const data = await response.json();
       if (data.success) {
@@ -100,7 +107,9 @@ export default function DepositSection({
           );
           onDepositSuccess?.();
         } else {
-          setMessage("No new deposits found yet. Send USDT and try again.");
+          setMessage(
+            "No new deposits found. Send USDT (BEP20) to the Ludino address, then scan again or paste the tx hash."
+          );
         }
       } else {
         setError(data.error || "Sync failed");
@@ -117,26 +126,19 @@ export default function DepositSection({
     <div className="bg-card border border-border rounded-xl p-4 md:p-6 space-y-4">
       <div className="flex items-center gap-2 mb-2">
         <Wallet className="w-5 h-5 text-primary" />
-        <h3 className="text-xl font-semibold">Deposit USDT (TRC-20)</h3>
+        <h3 className="text-xl font-semibold">Deposit USDT (BEP20)</h3>
       </div>
 
       <p className="text-sm text-foreground/70">
-        Send <strong>USDT on TRON ({networkLabel})</strong> to your personal
-        deposit address below. After it confirms, click{" "}
-        <strong>Scan for deposits</strong> or paste the transaction id.
+        Send <strong>USDT on {networkLabel}</strong> to the Ludino wallet below.
+        Lower gas than Tron — good for small amounts (2–3 USDT). After sending,
+        confirm with your transaction hash or scan.
       </p>
-
-      {isTestnet && (
-        <p className="text-xs text-amber-600/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
-          Testnet mode: use Shasta USDT only. Get test TRX/USDT from a Shasta
-          faucet before sending.
-        </p>
-      )}
 
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-2 text-foreground/70">
-            Your Tron deposit address
+            Ludino deposit address (BEP20)
           </label>
           <div className="flex gap-2">
             <input
@@ -148,7 +150,7 @@ export default function DepositSection({
             <button
               type="button"
               onClick={handleCopy}
-              className="px-4 py-2 bg-primary/10 hover:bg-primary/20 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+              className="px-4 py-2 bg-primary/10 hover:bg-primary/20 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center"
               aria-label="Copy address"
             >
               {copied ? (
@@ -169,10 +171,10 @@ export default function DepositSection({
           <button
             type="button"
             onClick={handleGenerateQR}
-            className="flex-1 py-3 bg-background border border-border rounded-lg font-semibold hover:bg-background/80 transition-colors flex items-center justify-center gap-2 min-h-[44px]"
+            className="flex-1 py-3 bg-background border border-border rounded-lg font-semibold flex items-center justify-center gap-2 min-h-[44px]"
           >
             <QrCode className="w-5 h-5" />
-            {qrCodeUrl ? "Hide QR Code" : "Show QR Code"}
+            {qrCodeUrl ? "Hide QR" : "Show QR"}
           </button>
           <button
             type="button"
@@ -191,15 +193,28 @@ export default function DepositSection({
           <div className="flex justify-center">
             <img
               src={qrCodeUrl}
-              alt="Deposit QR Code"
+              alt="Deposit QR"
               className="w-48 h-48 border border-border rounded-lg p-2 bg-white"
             />
           </div>
         )}
 
+        <div>
+          <label className="block text-sm font-medium mb-2 text-foreground/70">
+            Your sending wallet (optional, for scan)
+          </label>
+          <input
+            type="text"
+            value={fromAddress}
+            onChange={(e) => setFromAddress(e.target.value)}
+            placeholder="0x… (your MetaMask / exchange address)"
+            className="w-full px-4 py-2 bg-background border border-border rounded-lg font-mono text-sm min-h-[44px]"
+          />
+        </div>
+
         <div className="pt-4 border-t border-border space-y-3">
           <label className="block text-sm font-medium text-foreground/70">
-            Or confirm with transaction id
+            Confirm with transaction hash
           </label>
           <input
             type="text"
@@ -208,7 +223,7 @@ export default function DepositSection({
               setTxHash(e.target.value);
               setError(null);
             }}
-            placeholder="Paste Tron transaction id"
+            placeholder="0x… transaction hash from BscScan"
             className="w-full px-4 py-2 bg-background border border-border rounded-lg font-mono text-sm min-h-[44px]"
           />
           <button
@@ -220,13 +235,13 @@ export default function DepositSection({
             {confirming ? "Confirming…" : "Confirm deposit"}
           </button>
           <a
-            href={`${explorerBase}/#/address/${address}`}
+            href={explorerUrl || `${explorerBase}/address/${address}`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs text-primary flex items-center gap-1 hover:underline"
           >
             <ExternalLink className="w-3 h-3" />
-            View address on Tronscan
+            View on BscScan
           </a>
         </div>
 

@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma"
-import { getUSDTBalance, transferUSDT } from "./tron"
-import { validateAddress as validateTronAddress } from "./tron"
-import { verifyUsdtDepositTx } from "./tron-deposits"
+import { transferUsdt, verifyBep20UsdtDeposit, getUsdtBalance } from "./bsc"
+import { validateBep20Address } from "./bep20"
 import { Decimal } from "@prisma/client/runtime/library"
 import type { Prisma } from "@prisma/client"
 import {
@@ -9,20 +8,19 @@ import {
   allowMockDeposits,
   getCommissionRateFraction,
   getCommissionRatePercent,
-  isLedgerOnlyWalletAddress,
 } from "@/lib/wallet/config"
 import { getPlatformLedgerUserId } from "@/lib/wallet/platform-user"
 import {
-  ensureUserDepositWallet,
-  resolveWithdrawalPrivateKey,
-} from "@/lib/wallet/deposit-wallet"
-import { isTronBase58Address } from "@/lib/blockchain/tron-network"
+  getLudinoUsdtAddress,
+  getLudinoWalletPrivateKey,
+  requireLudinoWalletPrivateKey,
+} from "@/lib/wallet/ludino-wallet"
 
 export { getCommissionRateFraction, getCommissionRatePercent }
 
 type DbTx = Prisma.TransactionClient
 
-/** Platform play balance (ledger). Never overwrite from on-chain USDT. */
+/** Platform play balance (ledger). */
 export async function getUserLedgerBalance(userId: string): Promise<number> {
   const row = await prisma.user.findUnique({
     where: { id: userId },
@@ -31,22 +29,9 @@ export async function getUserLedgerBalance(userId: string): Promise<number> {
   return row ? parseFloat(row.walletBalance.toString()) : 0
 }
 
-/** @deprecated Use ensureUserDepositWallet — creates Tron wallet + encrypted key */
-export async function createUserWallet(userId: string): Promise<string> {
-  const { address } = await ensureUserDepositWallet(userId)
-  return address
-}
-
-/** On-chain USDT at deposit address (informational). Does not change ledger. */
-export async function getOnChainUsdtBalance(userId: string): Promise<number> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { walletAddress: true },
-  })
-  if (!user?.walletAddress || isLedgerOnlyWalletAddress(user.walletAddress)) {
-    return 0
-  }
-  return getUSDTBalance(user.walletAddress)
+/** Ludino hot wallet on-chain USDT (informational). */
+export async function getLudinoOnChainUsdtBalance(): Promise<number> {
+  return getUsdtBalance(getLudinoUsdtAddress())
 }
 
 async function adjustBalanceInTx(
@@ -144,10 +129,7 @@ export async function refundEntryFeeInTx(
   return true
 }
 
-/**
- * Credit platform balance after verified TRC-20 USDT deposit.
- * USDT remains on the user's Tron deposit address until withdrawal.
- */
+/** Credit platform balance after verified BEP20 USDT deposit to Ludino wallet. */
 export async function processDeposit(
   userId: string,
   txHash: string,
@@ -171,20 +153,20 @@ export async function processDeposit(
         amount: new Decimal(amount),
         status: "COMPLETED",
         txHash,
-        description: "TRC-20 USDT deposit",
+        description: "BEP20 USDT deposit (BSC)",
       },
     })
   })
 }
 
-/** Confirm deposit: verify on TronGrid then credit ledger. */
+/** Verify BEP20 transfer to Ludino wallet on BSC, then credit ledger. */
 export async function confirmDepositByTxHash(
   userId: string,
   txHash: string,
   expectedAmount?: number
-): Promise<{ amount: number; txHash: string }> {
-  const { address } = await ensureUserDepositWallet(userId)
-  const { amount, from } = await verifyUsdtDepositTx(txHash, address)
+): Promise<{ amount: number; txHash: string; from: string }> {
+  const ludino = getLudinoUsdtAddress()
+  const { amount, from } = await verifyBep20UsdtDeposit(txHash, ludino)
 
   if (
     expectedAmount !== undefined &&
@@ -196,7 +178,11 @@ export async function confirmDepositByTxHash(
   }
 
   await processDeposit(userId, txHash.trim(), amount)
-  return { amount, txHash: txHash.trim() }
+  await prisma.user.update({
+    where: { id: userId },
+    data: { walletAddress: from },
+  })
+  return { amount, txHash: txHash.trim(), from }
 }
 
 export async function processWithdrawal(
@@ -205,48 +191,42 @@ export async function processWithdrawal(
   amount: number
 ): Promise<string> {
   const dest = toAddress.trim()
-  if (!isTronBase58Address(dest)) {
-    const legacyLedger =
-      isLedgerOnlyWalletAddress(dest) && allowLedgerOnlyWithdrawals();
-    if (!legacyLedger && !(await validateTronAddress(dest))) {
-      throw new Error("Invalid Tron address (must start with T…)")
-    }
+  if (!validateBep20Address(dest)) {
+    throw new Error("Invalid BEP20 address (use 0x… on BNB Smart Chain)")
   }
-
   if (amount <= 0) throw new Error("Invalid withdrawal amount")
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { walletAddress: true, walletBalance: true },
-  })
-
-  if (!user?.walletAddress) {
-    throw new Error("User wallet not found")
-  }
-
-  const balance = parseFloat(user.walletBalance.toString())
+  const balance = await getUserLedgerBalance(userId)
   if (balance < amount) {
     throw new Error("Insufficient balance")
   }
 
-  if (
-    isLedgerOnlyWalletAddress(user.walletAddress) &&
-    allowLedgerOnlyWithdrawals()
-  ) {
-    throw new Error(
-      "Upgrade your wallet: open the Wallet page once to get a real Tron deposit address."
-    )
+  if (allowLedgerOnlyWithdrawals() && !getLudinoWalletPrivateKey()) {
+    const txHash = `ledger_${Date.now()}_${userId.slice(0, 8)}`
+    await prisma.$transaction(async (tx) => {
+      await adjustBalanceInTx(tx, userId, -amount)
+      await tx.transaction.create({
+        data: {
+          userId,
+          type: "WITHDRAWAL",
+          amount: new Decimal(amount),
+          status: "COMPLETED",
+          txHash,
+          description: `Ledger withdrawal to ${dest} (no BSC_PRIVATE_KEY)`,
+        },
+      })
+    })
+    return txHash
   }
 
-  const privateKey = await resolveWithdrawalPrivateKey(userId)
-
+  const privateKey = requireLudinoWalletPrivateKey()
   let txHash: string
   try {
-    txHash = await transferUSDT(privateKey, dest, amount)
+    txHash = await transferUsdt(privateKey, dest, amount)
   } catch (error: any) {
     throw new Error(
       error.message ||
-        "Transfer failed. Ensure the deposit wallet has TRX for gas (TRON_PRIVATE_KEY hot wallet funds new wallets)."
+        "Transfer failed. Ensure Ludino wallet has enough USDT and BNB for gas."
     )
   }
 
@@ -259,7 +239,7 @@ export async function processWithdrawal(
         amount: new Decimal(amount),
         status: "COMPLETED",
         txHash,
-        description: `TRC-20 withdrawal to ${dest}`,
+        description: `BEP20 withdrawal to ${dest}`,
       },
     })
   })
