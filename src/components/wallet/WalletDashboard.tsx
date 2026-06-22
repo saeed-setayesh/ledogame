@@ -24,28 +24,52 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
   const [withdrawing, setWithdrawing] = useState(false);
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
   const [withdrawSuccess, setWithdrawSuccess] = useState(false);
+  const [walletError, setWalletError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchBalance();
   }, []);
 
   const fetchBalance = async () => {
+    setWalletError(null);
     try {
-      const response = await fetch("/api/wallet/balance?sync=true");
-      const data = await response.json();
+      const [balanceRes, infoRes] = await Promise.all([
+        fetch("/api/wallet/balance?sync=true"),
+        fetch("/api/wallet/deposit-info"),
+      ]);
+
+      const data = await balanceRes.json();
+      const info = infoRes.ok ? await infoRes.json() : null;
+
       if (data.error) {
-        console.error(data.error);
-        return;
+        setWalletError(data.error);
+      } else {
+        setBalance(data.balance || "0");
+        setOnChainUsdt(data.onChainUsdt ?? null);
       }
-      setBalance(data.balance || "0");
-      setAddress(data.address);
-      setNetworkLabel(data.networkLabel || "BNB Smart Chain");
-      setUsdtContract(data.usdtContract);
-      setIsTestnet(!!data.isTestnet);
-      setOnChainUsdt(data.onChainUsdt ?? null);
-      setExplorerUrl(data.explorerUrl);
+
+      // Prefer balance API; fall back to public deposit-info so UI always shows
+      const depositAddress =
+        data.address || info?.depositAddress || null;
+
+      if (depositAddress) {
+        setAddress(depositAddress);
+        setNetworkLabel(
+          data.networkLabel || info?.networkLabel || "BNB Smart Chain"
+        );
+        setUsdtContract(data.usdtContract || info?.usdtContract);
+        setIsTestnet(data.isTestnet ?? info?.network === "testnet");
+        setExplorerUrl(
+          data.explorerUrl ||
+            info?.explorerUrl ||
+            `https://bscscan.com/address/${depositAddress}`
+        );
+      } else if (info?.error) {
+        setWalletError(info.error);
+      }
     } catch (error) {
       console.error("Failed to fetch balance:", error);
+      setWalletError("Could not load wallet. Try refreshing the page.");
     } finally {
       setLoading(false);
     }
@@ -110,6 +134,12 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
 
   return (
     <div className="space-y-4 md:space-y-6">
+      {walletError && (
+        <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm text-amber-700 dark:text-amber-200">
+          {walletError}
+        </div>
+      )}
+
       {/* Balance Card */}
       <div className="bg-gradient-to-br from-primary/20 via-primary/10 to-transparent border border-primary/30 rounded-xl p-4 md:p-6 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
@@ -147,8 +177,8 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
         </div>
       </div>
 
-      {/* Deposit Section */}
-      {address && (
+      {/* Deposit Section — always show when Ludino address is known */}
+      {address ? (
         <DepositSection
           address={address}
           networkLabel={networkLabel}
@@ -157,6 +187,11 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
           explorerUrl={explorerUrl}
           onDepositSuccess={fetchBalance}
         />
+      ) : (
+        <div className="bg-card border border-border rounded-xl p-4 text-sm text-foreground/70">
+          Deposit form is unavailable. Ask admin to set{" "}
+          <code className="text-xs">LUDINO_USDT_ADDRESS</code> on the server.
+        </div>
       )}
 
       {/* Withdraw Section */}
@@ -178,7 +213,7 @@ export default function WalletDashboard({ userId }: WalletDashboardProps) {
                 setWithdrawError(null);
               }}
               className="w-full px-4 py-2 bg-background border border-border rounded-lg min-h-[44px] focus:outline-none focus:ring-2 focus:ring-primary/50"
-              placeholder="T…"
+              placeholder="0x…"
             />
           </div>
           <div>
