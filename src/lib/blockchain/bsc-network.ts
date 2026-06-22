@@ -1,17 +1,36 @@
 /** BSC (BNB Smart Chain) network configuration. */
 
+/** Official Binance-Peg BSC-USD (USDT BEP20) on BSC mainnet — 18 decimals. */
+export const BSC_MAINNET_USDT =
+  "0x55d398326f99059fF775485246999027B3197955";
+
+export const BSC_TESTNET_USDT =
+  "0x337610d27c682E00C0cAe907bD958375b6feeb0";
+
 export function getBscNetwork(): "mainnet" | "testnet" {
   const raw = (process.env.BSC_NETWORK || "mainnet").trim().toLowerCase();
   const first = raw.split("|")[0]?.trim() || "mainnet";
   return first === "testnet" ? "testnet" : "mainnet";
 }
 
-export function getBscRpcUrl(): string {
+export function getBscRpcUrls(): string[] {
   const custom = process.env.BSC_RPC_URL?.trim();
-  if (custom) return custom;
-  return getBscNetwork() === "mainnet"
-    ? "https://bsc-dataseed.binance.org"
-    : "https://bsc-testnet-rpc.publicnode.com";
+  if (custom) return [custom];
+
+  if (getBscNetwork() === "mainnet") {
+    return [
+      "https://bsc-dataseed.binance.org",
+      "https://bsc-dataseed1.binance.org",
+      "https://bsc-dataseed2.binance.org",
+      "https://rpc.ankr.com/bsc",
+      "https://bsc.publicnode.com",
+    ];
+  }
+  return ["https://bsc-testnet-rpc.publicnode.com"];
+}
+
+export function getBscRpcUrl(): string {
+  return getBscRpcUrls()[0];
 }
 
 export function getBscNetworkLabel(): string {
@@ -26,19 +45,13 @@ export function getBscScanBaseUrl(): string {
     : "https://testnet.bscscan.com";
 }
 
-export function getBscScanApiBaseUrl(): string {
-  return getBscNetwork() === "mainnet"
-    ? "https://api.bscscan.com/api"
-    : "https://api-testnet.bscscan.com/api";
-}
-
 /** BEP20 USDT on BSC (18 decimals). */
 export function getBscUsdtContractAddress(): string {
   const custom = process.env.BSC_USDT_CONTRACT?.trim();
   if (custom) return custom;
   return getBscNetwork() === "mainnet"
-    ? "0x55d398326f99059fF7728373c0D4c4d0E0C294"
-    : "0x337610d27c682E00C0cAe907bD958375b6feeb0";
+    ? BSC_MAINNET_USDT
+    : BSC_TESTNET_USDT;
 }
 
 export const BSC_USDT_DECIMALS = 18;

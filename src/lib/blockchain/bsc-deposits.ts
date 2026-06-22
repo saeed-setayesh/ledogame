@@ -1,5 +1,6 @@
+import { Contract, JsonRpcProvider } from "ethers";
 import {
-  getBscScanApiBaseUrl,
+  getBscRpcUrls,
   getBscUsdtContractAddress,
   BSC_USDT_DECIMALS,
 } from "./bsc-network";
@@ -13,6 +14,11 @@ export interface Bep20IncomingTransfer {
   blockTimestamp?: number;
 }
 
+const ERC20_ABI = [
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+];
+
+/** Fetch recent USDT transfers to Ludino via BSC RPC (no BscScan API). */
 export async function fetchIncomingUsdtTransfers(
   ludinoAddress: string,
   fromAddress?: string,
@@ -20,52 +26,49 @@ export async function fetchIncomingUsdtTransfers(
 ): Promise<Bep20IncomingTransfer[]> {
   if (!validateBep20Address(ludinoAddress)) return [];
 
-  const base = getBscScanApiBaseUrl();
-  const params = new URLSearchParams({
-    module: "account",
-    action: "tokentx",
-    address: ludinoAddress,
-    contractaddress: getBscUsdtContractAddress(),
-    page: "1",
-    offset: String(limit),
-    sort: "desc",
-  });
-  const apiKey = process.env.BSCSCAN_API_KEY?.trim();
-  if (apiKey) params.set("apikey", apiKey);
-
-  const res = await fetch(`${base}?${params.toString()}`);
-  if (!res.ok) {
-    throw new Error(`BscScan API error (${res.status})`);
-  }
-
-  const json = (await res.json()) as {
-    status: string;
-    message: string;
-    result: Array<{
-      hash: string;
-      from: string;
-      to: string;
-      value: string;
-      timeStamp?: string;
-    }> | string;
-  };
-
-  if (json.status !== "1" || !Array.isArray(json.result)) {
-    if (json.message === "No transactions found") return [];
-    throw new Error(json.message || "Failed to fetch transfers from BscScan");
-  }
-
   const ludino = ludinoAddress.toLowerCase();
   const fromFilter = fromAddress?.toLowerCase();
+  const usdt = getBscUsdtContractAddress();
 
-  return json.result
-    .filter((row) => row.to.toLowerCase() === ludino)
-    .filter((row) => !fromFilter || row.from.toLowerCase() === fromFilter)
-    .map((row) => ({
-      transactionId: row.hash,
-      from: row.from,
-      to: row.to,
-      amount: Number(row.value) / 10 ** BSC_USDT_DECIMALS,
-      blockTimestamp: row.timeStamp ? Number(row.timeStamp) * 1000 : undefined,
-    }));
+  for (const rpcUrl of getBscRpcUrls()) {
+    try {
+      const provider = new JsonRpcProvider(rpcUrl);
+      const contract = new Contract(usdt, ERC20_ABI, provider);
+      const currentBlock = await provider.getBlockNumber();
+      const fromBlock = Math.max(0, currentBlock - 200_000);
+
+      const filter = contract.filters.Transfer(null, ludinoAddress);
+      const logs = await contract.queryFilter(filter, fromBlock, currentBlock);
+
+      const transfers: Bep20IncomingTransfer[] = [];
+
+      for (const log of logs.reverse()) {
+        if (!log.args) continue;
+        const from = String(log.args.from);
+        const to = String(log.args.to);
+        if (to.toLowerCase() !== ludino) continue;
+        if (fromFilter && from.toLowerCase() !== fromFilter) continue;
+
+        const amount =
+          Number(log.args.value) / 10 ** BSC_USDT_DECIMALS;
+        if (amount <= 0) continue;
+
+        transfers.push({
+          transactionId: log.transactionHash,
+          from,
+          to,
+          amount,
+        });
+        if (transfers.length >= limit) break;
+      }
+
+      return transfers;
+    } catch (err) {
+      console.warn(`[bsc-deposits] RPC ${rpcUrl} failed:`, err);
+    }
+  }
+
+  throw new Error(
+    "Could not load deposits from BSC. Try confirming with your transaction hash instead."
+  );
 }
