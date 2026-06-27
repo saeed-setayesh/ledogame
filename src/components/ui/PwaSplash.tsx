@@ -23,6 +23,7 @@ export default function PwaSplash() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (window.location.pathname.startsWith("/hosting-down")) return;
     if (isCapacitorNativeWebView()) return;
     try {
       if (sessionStorage.getItem(STORAGE_KEY)) return;

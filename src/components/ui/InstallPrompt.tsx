@@ -26,6 +26,10 @@ export default function InstallPrompt() {
   const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && window.location.pathname.startsWith("/hosting-down")) {
+      setVisible(false);
+      return;
+    }
     if (isCapacitorNativeWebView()) {
       setVisible(false);
       setDeferred(null);

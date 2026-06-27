@@ -1,59 +1,101 @@
-import Image from "next/image";
-
-export const metadata = {
-  title: "LUDINO — Hosting unavailable",
-  robots: "noindex, nofollow",
-};
-
+/**
+ * Generic hosting suspension page — intentionally not Ludino-branded.
+ * Shown when SERVER_DOWN=true in environment.
+ */
 export default function HostingDownPage() {
   return (
-    <div className="game-bg min-h-dvh flex flex-col items-center justify-center p-6 text-center">
-      <div className="max-w-md w-full space-y-6">
-        <div className="flex justify-center">
-          <Image
-            src="/game/logo.png"
-            alt="LUDINO"
-            width={160}
-            height={64}
-            className="h-14 w-auto object-contain"
-            priority
-          />
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 2147483647,
+        background: "#ffffff",
+        color: "#222222",
+        fontFamily:
+          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+        fontSize: "14px",
+        lineHeight: 1.5,
+        WebkitFontSmoothing: "antialiased",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: "640px",
+          margin: "0 auto",
+          padding: "48px 24px 32px",
+        }}
+      >
+        <div
+          style={{
+            border: "1px solid #d8d8d8",
+            background: "#fafafa",
+            padding: "12px 16px",
+            marginBottom: "24px",
+            fontSize: "13px",
+            color: "#555",
+          }}
+        >
+          HTTP/1.1 503 Service Unavailable
         </div>
 
-        <div className="bg-card border border-border rounded-2xl p-6 md:p-8 space-y-4 shadow-xl">
-          <div className="mx-auto w-14 h-14 rounded-full bg-danger/15 border border-danger/30 flex items-center justify-center">
-            <span className="text-2xl" aria-hidden>⚠</span>
-          </div>
+        <h1
+          style={{
+            fontSize: "22px",
+            fontWeight: 600,
+            color: "#1a1a1a",
+            margin: "0 0 16px",
+            letterSpacing: "-0.02em",
+          }}
+        >
+          Account suspended — payment required
+        </h1>
 
-          <h1 className="text-2xl md:text-3xl font-bold text-foreground">
-            Hosting is down
-          </h1>
+        <p style={{ margin: "0 0 14px", color: "#444" }}>
+          This website is currently unavailable because the hosting account
+          associated with this domain has been <strong>suspended</strong> due to
+          non-payment of hosting services.
+        </p>
 
-          <p className="text-foreground/70 text-sm md:text-base leading-relaxed">
-            This site is not reachable because the server hosting has been
-            suspended — usually due to an unpaid hosting bill. LUDINO itself is
-            not under maintenance; the infrastructure provider has turned off the
-            server.
-          </p>
+        <p style={{ margin: "0 0 14px", color: "#444" }}>
+          All web, application, and database services for this account have been
+          stopped. Visitors cannot access this site until the account holder
+          settles the outstanding balance with the hosting provider.
+        </p>
 
-          <p className="text-foreground/60 text-sm leading-relaxed">
-            The site will return once hosting payment is resolved. If you run
-            this project, renew your hosting plan (e.g. Railway, VPS, or your
-            provider) and turn off{" "}
-            <code className="text-xs bg-background/80 px-1.5 py-0.5 rounded">
-              SERVER_DOWN
-            </code>{' '}
-            in your environment.
-          </p>
-
-          <p className="text-xs text-foreground/50 leading-relaxed">
-            این سایت به‌دلیل قطع یا تعلیق هاستینگ (معمولاً پرداخت نشدن هاست)
-            در دسترس نیست — نه به‌خاطر تعمیر خود پلتفرم لدینو.
-          </p>
+        <div
+          style={{
+            border: "1px solid #e8c4c4",
+            background: "#fff8f8",
+            padding: "14px 16px",
+            margin: "20px 0",
+            color: "#5c3d3d",
+          }}
+        >
+          <strong style={{ display: "block", marginBottom: "6px" }}>
+            Data retention notice
+          </strong>
+          Your stored data (files, databases, and backups on this server) will
+          remain for <strong>7 days</strong> from the suspension date. If payment
+          is not received within this period, all data may be{" "}
+          <strong>permanently deleted</strong> and cannot be restored.
         </div>
 
-        <p className="text-xs text-foreground/40">
-          ludino.net · hosting suspended
+        <p style={{ margin: "0 0 14px", color: "#444" }}>
+          If you are the account owner, sign in to your hosting control panel and
+          complete payment to restore service. If you believe this is an error,
+          contact your hosting provider billing department.
+        </p>
+
+        <p
+          style={{
+            margin: "28px 0 0",
+            fontSize: "12px",
+            color: "#888",
+            borderTop: "1px solid #e5e5e5",
+            paddingTop: "16px",
+          }}
+        >
+          Reference: SUSP-UNPAID · Status: Suspended · Error 503
         </p>
       </div>
     </div>

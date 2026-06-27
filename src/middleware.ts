@@ -50,7 +50,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Hosting is unavailable. The server may be suspended due to unpaid hosting.",
+          "503 Service Unavailable. Hosting account suspended due to non-payment.",
       },
       { status: 503 }
     );
