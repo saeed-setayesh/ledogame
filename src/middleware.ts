@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { isServerDown } from "@/lib/server-down";
 
+const HOSTING_DOWN_PATH = "/hosting-down";
+
 const STATIC_PREFIXES = [
   "/_next",
   "/icons",
@@ -25,8 +27,19 @@ export function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  if (pathname === "/maintenance" || pathname.startsWith("/maintenance/")) {
+  if (
+    pathname === HOSTING_DOWN_PATH ||
+    pathname.startsWith(HOSTING_DOWN_PATH + "/")
+  ) {
     return NextResponse.next();
+  }
+
+  // Legacy path → new page
+  if (pathname === "/maintenance" || pathname.startsWith("/maintenance/")) {
+    const url = request.nextUrl.clone();
+    url.pathname = HOSTING_DOWN_PATH;
+    url.search = "";
+    return NextResponse.redirect(url);
   }
 
   if (isStaticAsset(pathname)) {
@@ -35,13 +48,16 @@ export function middleware(request: NextRequest) {
 
   if (pathname.startsWith("/api")) {
     return NextResponse.json(
-      { error: "Server is temporarily down. Please try again later." },
+      {
+        error:
+          "Hosting is unavailable. The server may be suspended due to unpaid hosting.",
+      },
       { status: 503 }
     );
   }
 
   const url = request.nextUrl.clone();
-  url.pathname = "/maintenance";
+  url.pathname = HOSTING_DOWN_PATH;
   url.search = "";
   return NextResponse.redirect(url);
 }
