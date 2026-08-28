@@ -328,5 +328,7 @@ button:focus-visible,
 
 /* Mobile optimizations */
 @media (max-width: 640px) {
-  button, [role="button"] { min-height: 44px; }
+  button:not(.no-touch-min), [role="button"]:not(.no-touch-min) {
+    min-height: 44px;
+  }
 }

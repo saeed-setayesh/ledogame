@@ -13,8 +13,25 @@ const activeGames = new Map<
 >();
 
 /** Countdown for roll/move; server stamps on each persisted state update. */
-export const TURN_COUNTDOWN_MS = 45_000;
+export const TURN_COUNTDOWN_MS = 20_000;
 export const RUSH_TURN_COUNTDOWN_MS = 15_000;
+
+/**
+ * Notified whenever a game's persisted state changes, so the socket layer can
+ * (re)arm the turn timer. Registered once from initializeSocket.
+ */
+type StateChangeListener = (gameId: string, state: LudoGameState) => void;
+let stateChangeListener: StateChangeListener | null = null;
+export function setStateChangeListener(listener: StateChangeListener | null) {
+  stateChangeListener = listener;
+}
+function notifyStateChange(gameId: string, state: LudoGameState) {
+  try {
+    stateChangeListener?.(gameId, state);
+  } catch (err) {
+    console.error(`[Game ${gameId}] state-change listener error:`, err);
+  }
+}
 
 export function stampTurnDeadline(state: LudoGameState): LudoGameState {
   if (state.gameStatus !== "ACTIVE") {
@@ -53,6 +70,7 @@ export async function createGameState(
     },
   });
 
+  notifyStateChange(gameId, state);
   return state;
 }
 
@@ -80,6 +98,7 @@ export async function updateGameState(gameId: string, state: LudoGameState) {
         diceValue: stamped.diceValue,
       },
     });
+    notifyStateChange(gameId, stamped);
   }
 }
 
@@ -123,6 +142,7 @@ export async function loadGameFromDatabase(
       engine.setState(normalized);
       const state = stampTurnDeadline(engine.getState());
       activeGames.set(gameId, { engine, state });
+      notifyStateChange(gameId, state);
       return state;
     }
   }
@@ -131,6 +151,7 @@ export async function loadGameFromDatabase(
   const state = stampTurnDeadline(engine.getState());
   activeGames.set(gameId, { engine, state });
 
+  notifyStateChange(gameId, state);
   return state;
 }
 

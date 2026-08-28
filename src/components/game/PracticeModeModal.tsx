@@ -18,6 +18,7 @@ export default function PracticeModeModal({
 }: PracticeModeModalProps) {
   const router = useRouter();
   const [aiPlayers, setAiPlayers] = useState(1);
+  const [mode, setMode] = useState<"CLASSIC" | "RUSH">("CLASSIC");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +37,7 @@ export default function PracticeModeModal({
           entryFee: 0,
           aiPlayers,
           practiceMode: true,
-          gameMode: "CLASSIC",
+          gameMode: mode,
         }),
       });
 
@@ -130,6 +131,27 @@ export default function PracticeModeModal({
           <p className="text-sm opacity-70">
             Play against AI opponents to practice. No entry fee required!
           </p>
+
+          <div>
+            <label className="block text-sm font-medium mb-3">Game mode</label>
+            <div className="grid grid-cols-2 gap-2">
+              {(["CLASSIC", "RUSH"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={cn(
+                    "rounded-lg border-2 py-2 text-sm font-semibold transition-all",
+                    mode === m
+                      ? "border-primary bg-primary/15 text-white"
+                      : "border-border bg-background text-foreground/70"
+                  )}
+                >
+                  {m === "CLASSIC" ? "Classic" : "Rush"}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div>
             <label className="block text-sm font-medium mb-3">

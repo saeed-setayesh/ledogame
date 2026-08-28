@@ -50,8 +50,17 @@ const COLOR_MAP: Record<PlayerColor, string> = {
   YELLOW: "#f1c40f",
 };
 
-const CLASSIC_TURN_MS = 45_000;
+const CLASSIC_TURN_MS = 20_000;
 const RUSH_TURN_MS = 15_000;
+
+interface FinishInfo {
+  winnerUserId: string | null;
+  winnerUsername: string | null;
+  payout: number;
+  totalPot: number;
+  entryFee: number;
+  cancelled?: boolean;
+}
 
 function flagEmoji(code: string | null | undefined): string {
   if (!code || code.length !== 2) return "\u{1F3F3}";
@@ -140,6 +149,17 @@ function TurnRing({
   );
 }
 
+function useSecondsLeft(endsAt: string | null): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!endsAt) return;
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [endsAt]);
+  if (!endsAt) return null;
+  return Math.max(0, Math.ceil((new Date(endsAt).getTime() - now) / 1000));
+}
+
 function PlayerCard({
   player,
   isTimerActive,
@@ -152,6 +172,9 @@ function PlayerCard({
     userId: string;
     color: PlayerColor;
     pieces: Array<{ isFinished: boolean }>;
+    hasRolled?: boolean;
+    mustMove?: boolean;
+    diceValue?: number | null;
   };
   isTimerActive: boolean;
   isMe: boolean;
@@ -172,6 +195,13 @@ function PlayerCard({
   const showLive =
     isMe && localVideo?.enabled && localVideo.stream && isVideoLive(localVideo.stream);
 
+  // RUSH: every player has their own die on screen (parallel play).
+  const rushDieValue =
+    gameState.gameMode === "RUSH" && (player.hasRolled || player.mustMove)
+      ? player.diceValue ?? null
+      : null;
+  const showRushDie = gameState.gameMode === "RUSH";
+
   return (
     <div
       className="relative flex items-center gap-2 min-w-0 max-w-48 px-1 py-1"
@@ -181,6 +211,15 @@ function PlayerCard({
           : "none",
       }}
     >
+      {showRushDie && (
+        <div
+          className="absolute left-[2.6rem] top-[2.6rem] z-20 flex h-6 w-6 items-center justify-center rounded-md border-2 bg-white text-[11px] font-serif font-bold leading-none text-[#2b2b2b] shadow-[0_1px_4px_rgba(0,0,0,0.55)]"
+          style={{ borderColor: COLOR_MAP[player.color] }}
+          title={`${username}'s die`}
+        >
+          {rushDieValue ?? "–"}
+        </div>
+      )}
       <div
         className="relative z-10 w-14 h-14 shrink-0 rounded-full overflow-hidden border-[5px] border-white bg-white"
         style={{
@@ -228,6 +267,7 @@ function PlayerCard({
           <span className="ml-1 text-white/70">{finishedCount}/4</span>
         </div>
       </div>
+
     </div>
   );
 }
@@ -256,6 +296,59 @@ function LiveAvatar({ stream }: { stream: MediaStream }) {
   );
 }
 
+function FinishOverlay({
+  info,
+  currentUserId,
+  onLobby,
+}: {
+  info: FinishInfo;
+  currentUserId: string;
+  onLobby: () => void;
+}) {
+  const iWon = info.winnerUserId === currentUserId;
+  const cancelled = info.cancelled || !info.winnerUserId;
+
+  let title: string;
+  let sub: string;
+  if (cancelled) {
+    title = "Game ended";
+    sub =
+      info.entryFee > 0
+        ? "Opponents left — your entry fee was refunded."
+        : "The game was ended early.";
+  } else if (iWon) {
+    title = "🏆 You win!";
+    sub =
+      info.payout > 0
+        ? `+${info.payout.toFixed(2)} USDT added to your balance`
+        : "Great game!";
+  } else {
+    title = "You lost";
+    sub =
+      info.entryFee > 0
+        ? `${info.winnerUsername ?? "Your opponent"} won the ${info.totalPot.toFixed(
+            2
+          )} USDT pot`
+        : `${info.winnerUsername ?? "Your opponent"} finished first`;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm px-6">
+      <div className="w-full max-w-sm rounded-2xl border-2 border-[#f2a51e] bg-zinc-900 p-6 text-center shadow-2xl">
+        <div className="text-2xl font-extrabold text-white">{title}</div>
+        <div className="mt-2 text-sm text-white/70">{sub}</div>
+        <button
+          type="button"
+          onClick={onLobby}
+          className="mt-6 w-full rounded-xl bg-linear-to-r from-[#ffb333] to-[#de3a16] py-3 font-bold text-white shadow-lg active:scale-95"
+        >
+          Back to lobby
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function GamePage({ game, currentUserId }: GamePageProps) {
   const router = useRouter();
   const [gameState, setGameState] = useState<LudoGameState | null>(null);
@@ -263,11 +356,18 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   const [showNoMovesNotification, setShowNoMovesNotification] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const [localVideo, setLocalVideo] = useState<LocalVideoState | null>(null);
+  const [finishInfo, setFinishInfo] = useState<FinishInfo | null>(null);
+  const [bonusToast, setBonusToast] = useState<string | null>(null);
   const gameStateRef = useRef<LudoGameState | null>(null);
 
   useEffect(() => {
     gameStateRef.current = gameState;
   }, [gameState]);
+
+  const turnActive = gameState?.gameStatus === "ACTIVE";
+  const secondsLeft = useSecondsLeft(
+    turnActive ? gameState?.turnEndsAt ?? null : null
+  );
 
   useEffect(() => {
     const socket = getSocket();
@@ -298,6 +398,25 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
       if (!isMyMoveTurn(state, currentUserId)) {
         setAvailableMoves([]);
       }
+      const lm = state.lastMove;
+      if (lm && lm.bonusRoll && lm.playerId) {
+        const mover = state.players.find((p) => p.id === lm.playerId);
+        if (mover?.userId === currentUserId) {
+          setBonusToast(
+            lm.captured
+              ? "Capture! Roll again 🎲"
+              : lm.diceRoll === 6
+                ? "Rolled a 6 — roll again 🎲"
+                : "Piece home! Roll again 🎲"
+          );
+          window.setTimeout(() => setBonusToast(null), 2200);
+        }
+      }
+    });
+
+    socket.on("game:finished", (info: FinishInfo) => {
+      setFinishInfo(info);
+      setAvailableMoves([]);
     });
 
     socket.on(
@@ -352,6 +471,12 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
 
     return () => {
       socket.emit("game:leave", { gameId: game.id, userId: currentUserId });
+      socket.off("game:state");
+      socket.off("game:dice-rolled");
+      socket.off("game:piece-moved");
+      socket.off("game:finished");
+      socket.off("game:available-moves");
+      socket.off("game:error");
     };
   }, [game.id, currentUserId]);
 
@@ -434,9 +559,18 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
     gameState.players.some((p) => p.userId.startsWith("AI_")) &&
     gameState.players.length === 2;
 
-  const midSeat = Math.ceil(gameState.players.length / 2);
-  const topPlayersList = gameState.players.slice(0, midSeat);
-  const bottomPlayersList = gameState.players.slice(midSeat);
+  // Seat each player at the board corner that matches their pawn colour, so the
+  // profile card colour/position always lines up with their pieces on the board.
+  const seatOrder: PlayerColor[][] = [
+    ["BLUE", "GREEN"], // top row  (top-left, top-right)
+    ["RED", "YELLOW"], // bottom row (bottom-left, bottom-right)
+  ];
+  const bySlot = (row: PlayerColor[]) =>
+    row
+      .map((color) => gameState.players.find((p) => p.color === color) ?? null)
+      .filter((p): p is (typeof gameState.players)[number] => p !== null);
+  const topPlayersList = bySlot(seatOrder[0]);
+  const bottomPlayersList = bySlot(seatOrder[1]);
 
   let turnHint = "";
   if (gameState.gameMode === "RUSH") {
@@ -568,7 +702,32 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
 
       <p className="relative z-10 text-center text-xs font-semibold text-white/75 tracking-wide px-4 py-1 shrink-0">
         {turnHint}
+        {secondsLeft !== null && (
+          <span
+            className={
+              secondsLeft <= 5
+                ? "ml-2 font-bold text-red-400"
+                : "ml-2 text-white/60"
+            }
+          >
+            {secondsLeft}s
+          </span>
+        )}
       </p>
+
+      {bonusToast && (
+        <div className="pointer-events-none absolute left-1/2 top-24 z-50 -translate-x-1/2 rounded-full bg-emerald-600/95 px-4 py-1.5 text-sm font-bold text-white shadow-lg">
+          {bonusToast}
+        </div>
+      )}
+
+      {finishInfo && (
+        <FinishOverlay
+          info={finishInfo}
+          currentUserId={currentUserId}
+          onLobby={goLobby}
+        />
+      )}
 
       <GameNotification
         message="No moves available - Turn will skip"
@@ -638,7 +797,7 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
               game.players?.map((p) => ({
                 id: p.id,
                 userId: p.userId,
-                username: p.user?.username,
+                username: p.user?.username ?? undefined,
               })) || []
             }
           />

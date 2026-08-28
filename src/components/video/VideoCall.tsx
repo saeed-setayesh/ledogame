@@ -29,7 +29,8 @@ export default function VideoCall({
   micIconSrc = "/game/icons/mic.png",
 }: VideoCallProps) {
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
-  const [isAudioEnabled, setIsAudioEnabled] = useState(true);
+  const [isAudioEnabled, setIsAudioEnabled] = useState(false);
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(
     new Map()
@@ -67,12 +68,22 @@ export default function VideoCall({
   }, [isVideoEnabled, isAudioEnabled]);
 
   const initializeMedia = async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      setMediaError("Camera/mic not available on this device");
+      setIsVideoEnabled(false);
+      setIsAudioEnabled(false);
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: isVideoEnabled,
         audio: isAudioEnabled,
       });
 
+      setMediaError(null);
       setLocalStream(stream);
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
@@ -84,7 +95,17 @@ export default function VideoCall({
         }
       });
     } catch (error) {
-      console.error("Error accessing media devices:", error);
+      const err = error as DOMException;
+      console.error("Error accessing media devices:", err);
+      if (err?.name === "NotFoundError" || err?.name === "OverconstrainedError") {
+        setMediaError("No camera / microphone found");
+      } else if (err?.name === "NotAllowedError") {
+        setMediaError("Permission denied — allow camera/mic access");
+      } else {
+        setMediaError("Couldn't start camera / microphone");
+      }
+      setIsVideoEnabled(false);
+      setIsAudioEnabled(false);
     }
   };
 
@@ -133,11 +154,13 @@ export default function VideoCall({
   };
 
   const toggleVideo = () => {
-    setIsVideoEnabled(!isVideoEnabled);
+    setMediaError(null);
+    setIsVideoEnabled((v) => !v);
   };
 
   const toggleAudio = () => {
-    setIsAudioEnabled(!isAudioEnabled);
+    setMediaError(null);
+    setIsAudioEnabled((a) => !a);
   };
 
   const btnClass = (on: boolean) =>
@@ -158,11 +181,16 @@ export default function VideoCall({
 
   return (
     <div className={cn("flex items-center gap-2", compact && "relative")}>
+      {mediaError && (
+        <div className="pointer-events-none absolute -top-9 left-0 z-50 whitespace-nowrap rounded bg-red-600/95 px-2 py-1 text-[10px] font-semibold text-white shadow-lg">
+          {mediaError}
+        </div>
+      )}
       <button
         type="button"
         onClick={toggleVideo}
         className={btnClass(isVideoEnabled)}
-        title={isVideoEnabled ? "Video on" : "Video off"}
+        title={isVideoEnabled ? "Turn camera off" : "Turn camera on"}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -176,7 +204,7 @@ export default function VideoCall({
         type="button"
         onClick={toggleAudio}
         className={btnClass(isAudioEnabled)}
-        title={isAudioEnabled ? "Mic on" : "Mic off"}
+        title={isAudioEnabled ? "Mute microphone" : "Unmute microphone"}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={micIconSrc} alt="" className={compact ? "w-6 h-6 object-contain" : "w-7 h-7 md:w-8 md:h-8 object-contain"} />

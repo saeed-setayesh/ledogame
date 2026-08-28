@@ -6,12 +6,114 @@ import {
   loadGameFromDatabase,
   createGameState,
 } from "@/lib/game/game-state";
+import type { LudoGameState } from "@/lib/game/ludo-engine";
 import { prisma } from "@/lib/prisma";
 import { AIPlayer } from "@/lib/game/ai-player";
 import {
   collectEntryFeesAndStartGame,
   settleGameWinner,
+  refundGameEntryFees,
 } from "@/lib/wallet/game-payments";
+
+// One pending turn-timeout per active game. Re-armed on every state change.
+const turnTimers = new Map<string, NodeJS.Timeout>();
+
+function clearTurnTimer(gameId: string) {
+  const t = turnTimers.get(gameId);
+  if (t) clearTimeout(t);
+  turnTimers.delete(gameId);
+}
+
+/** (Re)arm the auto-skip timer for a game based on its current turn deadline. */
+export function scheduleTurnTimer(
+  gameId: string,
+  io: SocketIOServer,
+  state: LudoGameState
+) {
+  clearTurnTimer(gameId);
+  if (state.gameStatus !== "ACTIVE" || !state.turnEndsAt) return;
+  const delay = Math.max(
+    500,
+    new Date(state.turnEndsAt).getTime() - Date.now() + 250
+  );
+  turnTimers.set(
+    gameId,
+    setTimeout(() => void handleTurnTimeout(gameId, io), delay)
+  );
+}
+
+async function handleTurnTimeout(gameId: string, io: SocketIOServer) {
+  turnTimers.delete(gameId);
+  if (aiProcessing.has(gameId)) return; // AI loop will re-arm via state change
+
+  const engine = getGameEngine(gameId);
+  const state = getGameState(gameId);
+  if (!engine || !state || state.gameStatus !== "ACTIVE" || !state.turnEndsAt) {
+    return;
+  }
+  if (new Date(state.turnEndsAt).getTime() > Date.now()) {
+    scheduleTurnTimer(gameId, io, state);
+    return;
+  }
+
+  try {
+    if (state.gameMode === "RUSH") {
+      const blocked = state.players.filter((p) => p.mustMove);
+      if (blocked.length === 0) {
+        // Keep the countdown alive for players still deciding to roll.
+        await updateGameState(gameId, engine.getState());
+        return;
+      }
+      let finished = false;
+      for (const p of blocked) {
+        const r = engine.autoAdvanceForTimeout(p.id);
+        finished = finished || r.finished;
+      }
+      const newState = engine.getState();
+      await updateGameState(gameId, newState);
+      io.to(`game:${gameId}`).emit("game:state", {
+        gameState: getGameState(gameId),
+      });
+      io.to(`game:${gameId}`).emit("game:available-moves", {
+        moves: [],
+        forUserId: null,
+      });
+      if ((finished || newState.gameStatus === "FINISHED") && newState.winnerId) {
+        await handleGameFinish(gameId, newState.winnerId, io);
+      } else {
+        setTimeout(() => void processAITurn(gameId, io), 200);
+      }
+      return;
+    }
+
+    // CLASSIC — play the timed-out player's turn automatically.
+    const current = state.players[state.currentTurn];
+    if (!current) return;
+    const result = engine.autoAdvanceForTimeout(current.id);
+    const newState = engine.getState();
+    await updateGameState(gameId, newState);
+
+    io.to(`game:${gameId}`).emit("game:turn-timeout", {
+      userId: current.userId,
+      ...result,
+    });
+    io.to(`game:${gameId}`).emit("game:state", {
+      gameState: getGameState(gameId),
+    });
+    io.to(`game:${gameId}`).emit("game:available-moves", {
+      moves: [],
+      forUserId: null,
+    });
+
+    if (newState.gameStatus === "FINISHED" && newState.winnerId) {
+      await handleGameFinish(gameId, newState.winnerId, io);
+    } else {
+      setTimeout(() => void processAITurn(gameId, io), 300);
+    }
+  } catch (err) {
+    console.error(`[Game ${gameId}] turn timeout error:`, err);
+  }
+}
 
 export function gameHandlers(socket: Socket, io: SocketIOServer) {
   // Join game room
@@ -35,6 +137,15 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
 
       // Join room
       socket.join(`game:${gameId}`);
+      socket.data.userId = userId;
+      socket.data.gameId = gameId;
+
+      // A (re)join cancels any pending forfeit for this game.
+      const pendingForfeit = forfeitTimers.get(gameId);
+      if (pendingForfeit) {
+        clearTimeout(pendingForfeit);
+        forfeitTimers.delete(gameId);
+      }
 
       // Load game state if not in memory
       let gameState = getGameState(gameId);
@@ -108,7 +219,28 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       });
 
       if (gameState && gameState.gameStatus === "ACTIVE") {
+        scheduleTurnTimer(gameId, io, gameState);
         setTimeout(() => void processAITurn(gameId, io), 300);
+      } else if (gameState && gameState.gameStatus === "FINISHED") {
+        // Late joiner / refresh after the game already ended.
+        const finishedGame = await prisma.game.findUnique({
+          where: { id: gameId },
+          include: { players: { include: { user: true } } },
+        });
+        const winnerRow = finishedGame?.players.find(
+          (p) => p.userId === finishedGame.winnerId
+        );
+        socket.emit("game:finished", {
+          winnerUserId: finishedGame?.winnerId ?? null,
+          winnerUsername: winnerRow?.user?.username ?? null,
+          payout: winnerRow ? parseFloat(winnerRow.payoutAmount.toString()) : 0,
+          totalPot: finishedGame
+            ? parseFloat(finishedGame.totalPot.toString())
+            : 0,
+          entryFee: finishedGame
+            ? parseFloat(finishedGame.entryFee.toString())
+            : 0,
+        });
       }
     } catch (error: any) {
       socket.emit("game:error", { message: error.message });
@@ -137,6 +269,10 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
           playerId: gamePlayer.id,
           userId,
         });
+
+        if (!AIPlayer.isAIPlayer(userId)) {
+          maybeFinishOnForfeit(gameId, io);
+        }
       }
     } catch (error: any) {
       socket.emit("game:error", { message: error.message });
@@ -454,7 +590,7 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       }
 
       if (isGameFinished && state.winnerId) {
-        await handleGameFinish(gameId, state.winnerId);
+        await handleGameFinish(gameId, state.winnerId, io);
       } else {
         setTimeout(() => void processAITurn(gameId, io), 200);
       }
@@ -635,7 +771,7 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
           });
 
           if (isGameFinished && newState.winnerId) {
-            await handleGameFinish(gameId, newState.winnerId);
+            await handleGameFinish(gameId, newState.winnerId, io);
           } else {
             setTimeout(() => void processAITurn(gameId, io), 200);
           }
@@ -752,7 +888,7 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
       });
 
       if (isGameFinished && newState.winnerId) {
-        await handleGameFinish(gameId, newState.winnerId);
+        await handleGameFinish(gameId, newState.winnerId, io);
       } else {
         setTimeout(() => void processAITurn(gameId, io), 500);
       }
@@ -764,6 +900,137 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
   }
 }
 
-async function handleGameFinish(gameId: string, winnerUserId: string) {
+async function handleGameFinish(
+  gameId: string,
+  winnerUserId: string,
+  io: SocketIOServer
+) {
+  clearTurnTimer(gameId);
+
   await settleGameWinner(gameId, winnerUserId);
+
+  // Reflect the finished status in the in-memory state.
+  const engine = getGameEngine(gameId);
+  const state = getGameState(gameId);
+  if (state) {
+    state.gameStatus = "FINISHED";
+    state.winnerId = winnerUserId;
+    state.turnEndsAt = null;
+    engine?.setState(state);
+  }
+
+  const game = await prisma.game.findUnique({
+    where: { id: gameId },
+    include: { players: { include: { user: true } } },
+  });
+  const winnerRow = game?.players.find((p) => p.userId === winnerUserId);
+
+  io.to(`game:${gameId}`).emit("game:finished", {
+    winnerUserId,
+    winnerUsername:
+      winnerRow?.user?.username ||
+      (AIPlayer.isAIPlayer(winnerUserId)
+        ? AIPlayer.getAIUsername(winnerUserId)
+        : "Winner"),
+    payout: winnerRow ? parseFloat(winnerRow.payoutAmount.toString()) : 0,
+    totalPot: game ? parseFloat(game.totalPot.toString()) : 0,
+    entryFee: game ? parseFloat(game.entryFee.toString()) : 0,
+  });
+  if (state) {
+    io.to(`game:${gameId}`).emit("game:state", { gameState: state });
+  }
+}
+
+/** Tab-close / network drop: mark player offline and schedule a forfeit check. */
+export async function handleSocketDisconnect(
+  socket: Socket,
+  io: SocketIOServer
+) {
+  const gameId = socket.data?.gameId as string | undefined;
+  const userId = socket.data?.userId as string | undefined;
+  if (!gameId || !userId || AIPlayer.isAIPlayer(userId)) return;
+  try {
+    await prisma.gamePlayer.updateMany({
+      where: { gameId, userId, status: "ACTIVE" },
+      data: { status: "OFFLINE", leftAt: new Date() },
+    });
+    socket.to(`game:${gameId}`).emit("game:player-left", { userId });
+    maybeFinishOnForfeit(gameId, io);
+  } catch (err) {
+    console.error(`[Game ${gameId}] disconnect handler error:`, err);
+  }
+}
+
+// Debounce forfeit resolution so a refresh / brief disconnect doesn't end a game.
+const forfeitTimers = new Map<string, NodeJS.Timeout>();
+const FORFEIT_GRACE_MS = 12_000;
+
+function maybeFinishOnForfeit(gameId: string, io: SocketIOServer) {
+  const existing = forfeitTimers.get(gameId);
+  if (existing) clearTimeout(existing);
+  forfeitTimers.set(
+    gameId,
+    setTimeout(() => {
+      forfeitTimers.delete(gameId);
+      void resolveForfeit(gameId, io);
+    }, FORFEIT_GRACE_MS)
+  );
+}
+
+/**
+ * When a human abandons an ACTIVE game, end it: the last remaining human wins
+ * (and is settled), or if nobody is left the game is cancelled and refunded.
+ * Runs after a grace period; re-checks that players are still gone.
+ */
+async function resolveForfeit(gameId: string, io: SocketIOServer) {
+  const game = await prisma.game.findUnique({
+    where: { id: gameId },
+    include: { players: true },
+  });
+  if (!game || game.status !== "ACTIVE") return;
+
+  const humans = game.players.filter((p) => !AIPlayer.isAIPlayer(p.userId));
+
+  // Anyone actually still connected to this game's room? (Robust against
+  // refreshes / StrictMode remounts that briefly emit game:leave.)
+  const roomSockets = await io.in(`game:${gameId}`).fetchSockets();
+  const connectedUserIds = new Set(
+    roomSockets.map((s) => s.data?.userId as string | undefined).filter(Boolean)
+  );
+  if (humans.some((p) => connectedUserIds.has(p.userId))) return;
+
+  const activeHumans = humans.filter(
+    (p) => p.status === "ACTIVE" || p.status === "FINISHED"
+  );
+
+  // Practice / single-human games (1 human vs AI) are not forfeitable — the
+  // human simply left, so just stop the game without a "winner".
+  const isMultiHuman = humans.length >= 2;
+
+  if (humans.length > 0 && activeHumans.length === 0) {
+    await refundGameEntryFees(gameId, "All players left the game").catch(
+      (e) => console.error(`[Game ${gameId}] refund failed:`, e)
+    );
+    clearTurnTimer(gameId);
+    const state = getGameState(gameId);
+    if (state) {
+      state.gameStatus = "FINISHED";
+      state.turnEndsAt = null;
+    }
+    io.to(`game:${gameId}`).emit("game:finished", {
+      winnerUserId: null,
+      winnerUsername: null,
+      payout: 0,
+      totalPot: 0,
+      entryFee: parseFloat(game.entryFee.toString()),
+      cancelled: true,
+    });
+    return;
+  }
+
+  // In a multi-human game, if only one human is still connected they win by
+  // forfeit (their opponents abandoned the match).
+  if (isMultiHuman && activeHumans.length === 1) {
+    await handleGameFinish(gameId, activeHumans[0].userId, io);
+  }
 }

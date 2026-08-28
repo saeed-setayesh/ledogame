@@ -17,54 +17,87 @@ export default function ScreenRecorder({
     null
   );
 
+  const pickMimeType = (): string => {
+    const candidates = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+      "video/mp4",
+    ];
+    if (typeof MediaRecorder === "undefined") return "";
+    return candidates.find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  };
+
   const startRecording = async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getDisplayMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      alert("Screen recording isn't supported on this device or browser.");
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { mediaSource: "screen" } as MediaTrackConstraints & {
-          mediaSource?: string;
-        },
+        video: true,
         audio: true,
       });
 
-      const recorder = new MediaRecorder(stream, {
-        mimeType: "video/webm",
-      });
+      const mimeType = pickMimeType();
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined
+      );
 
       const chunks: Blob[] = [];
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunks.push(event.data);
-        }
+        if (event.data.size > 0) chunks.push(event.data);
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: "video/webm" });
+        const blob = new Blob(chunks, {
+          type: recorder.mimeType || "video/webm",
+        });
         downloadRecording(blob);
       };
 
-      recorder.start();
+      // Stop cleanly if the user ends the share from the browser UI.
+      stream.getVideoTracks().forEach((track) => {
+        track.onended = () => stopRecording();
+      });
+
+      recorder.start(1000);
       setMediaRecorder(recorder);
       setRecording(true);
     } catch (error) {
-      console.error("Error starting recording:", error);
+      const err = error as DOMException;
+      console.error("Error starting recording:", err);
+      if (err?.name === "NotAllowedError") {
+        // User dismissed the picker — not an error worth an alert.
+        return;
+      }
       alert("Failed to start recording. Please allow screen sharing.");
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorder && recording) {
-      mediaRecorder.stop();
-      mediaRecorder.stream.getTracks().forEach((track) => track.stop());
-      setRecording(false);
-      setMediaRecorder(null);
-    }
+    setMediaRecorder((rec) => {
+      if (rec) {
+        if (rec.state !== "inactive") rec.stop();
+        rec.stream.getTracks().forEach((track) => track.stop());
+      }
+      return null;
+    });
+    setRecording(false);
   };
 
   const downloadRecording = (blob: Blob) => {
+    const ext = blob.type.includes("mp4") ? "mp4" : "webm";
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `ludo-game-${gameId}-${Date.now()}.webm`;
+    a.download = `ludo-game-${gameId}-${Date.now()}.${ext}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

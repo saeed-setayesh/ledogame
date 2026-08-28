@@ -90,8 +90,10 @@ function getHomePosition(color: PlayerColor, pieceId: number): React.CSSProperti
   return gridToPercent(cx / GRID, cy / GRID);
 }
 
-const PIECE_W_TRACK = "4.8%";
-const PIECE_W_HOME = "5.2%";
+// A track cell is ~6.33% of the board; tokens sit roughly cell-sized (art has
+// built-in shadow padding, so a hair over 1 cell reads as ~1 cell visually).
+const PIECE_W_TRACK = "6.2%";
+const PIECE_W_HOME = "6.2%";
 
 export default function GamePiece({
   color,
@@ -121,6 +123,7 @@ export default function GamePiece({
         ...pos,
         width: pieceWidth,
         aspectRatio: "1 / 1",
+        minHeight: 0,
         transform: "translate(-50%, -50%)",
         zIndex: canMove ? 30 : selected ? 25 : 10,
         background: "transparent",
@@ -128,7 +131,7 @@ export default function GamePiece({
         padding: 0,
       }}
       className={cn(
-        "touch-manipulation select-none",
+        "no-touch-min touch-manipulation select-none",
         canMove ? "cursor-pointer" : "cursor-default disabled:cursor-default",
         "transition-transform duration-200",
         canMove && "hover:scale-110 active:scale-105 animate-pulse-glow",
