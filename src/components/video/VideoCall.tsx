@@ -2,10 +2,18 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import { usePeerMesh, type RemotePeer } from "@/lib/webrtc/use-peer-mesh";
 
 export type LocalVideoState = {
   enabled: boolean;
   stream: MediaStream | null;
+};
+
+export type PeerAudioState = {
+  userId: string;
+  connected: boolean;
+  speakingAudio: boolean;
+  hasVideo: boolean;
 };
 
 interface VideoCallProps {
@@ -14,7 +22,11 @@ interface VideoCallProps {
   players: { id: string; userId: string; username?: string }[];
   /** If true, only render control buttons (for bottom bar). */
   compact?: boolean;
+  /** Whether to play incoming voice/video from other players. */
+  soundEnabled?: boolean;
   onLocalVideoChange?: (state: LocalVideoState) => void;
+  onMicChange?: (on: boolean) => void;
+  onPeersChange?: (peers: PeerAudioState[]) => void;
   cameraIconSrc?: string;
   micIconSrc?: string;
 }
@@ -24,7 +36,10 @@ export default function VideoCall({
   userId,
   players,
   compact,
+  soundEnabled = true,
   onLocalVideoChange,
+  onMicChange,
+  onPeersChange,
   cameraIconSrc = "/game/icons/camera.png",
   micIconSrc = "/game/icons/mic.png",
 }: VideoCallProps) {
@@ -32,11 +47,9 @@ export default function VideoCall({
   const [isAudioEnabled, setIsAudioEnabled] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStreams, setRemoteStreams] = useState<Map<string, MediaStream>>(
-    new Map()
-  );
   const localVideoRef = useRef<HTMLVideoElement>(null);
-  const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
+
+  const remotePeers = usePeerMesh(gameId, userId, localStream, true);
 
   const notifyVideo = useCallback(
     (enabled: boolean, stream: MediaStream | null) => {
@@ -56,108 +69,94 @@ export default function VideoCall({
   }, [isVideoEnabled, localStream, notifyVideo]);
 
   useEffect(() => {
-    if (isVideoEnabled || isAudioEnabled) {
-      void initializeMedia();
-    } else {
-      stopMedia();
+    onMicChange?.(isAudioEnabled && !!localStream);
+  }, [isAudioEnabled, localStream, onMicChange]);
+
+  // Bubble peer audio/video state up so PlayerCards can show a mic indicator.
+  useEffect(() => {
+    if (!onPeersChange) return;
+    onPeersChange(
+      [...remotePeers.values()].map((p) => ({
+        userId: p.userId,
+        connected: p.connState === "connected",
+        speakingAudio: p.hasAudio && p.connState === "connected",
+        hasVideo: p.hasVideo,
+      }))
+    );
+  }, [remotePeers, onPeersChange]);
+
+  // Acquire / release the local mic+cam whenever the toggles change.
+  useEffect(() => {
+    let cancelled = false;
+    const want = isVideoEnabled || isAudioEnabled;
+
+    if (!want) {
+      setLocalStream((prev) => {
+        prev?.getTracks().forEach((t) => t.stop());
+        return null;
+      });
+      return;
     }
 
-    return () => {
-      stopMedia();
-    };
-  }, [isVideoEnabled, isAudioEnabled]);
-
-  const initializeMedia = async () => {
     if (
       typeof navigator === "undefined" ||
       !navigator.mediaDevices?.getUserMedia
     ) {
-      setMediaError("Camera/mic not available on this device");
+      setMediaError("Camera / microphone not available here");
       setIsVideoEnabled(false);
       setIsAudioEnabled(false);
       return;
     }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: isVideoEnabled,
-        audio: isAudioEnabled,
-      });
 
-      setMediaError(null);
-      setLocalStream(stream);
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-
-      players.forEach((player) => {
-        if (player.userId !== userId) {
-          createPeerConnection(player.userId);
+    navigator.mediaDevices
+      .getUserMedia({ video: isVideoEnabled, audio: isAudioEnabled })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
         }
+        setMediaError(null);
+        setLocalStream((prev) => {
+          prev?.getTracks().forEach((t) => t.stop());
+          return stream;
+        });
+      })
+      .catch((error: DOMException) => {
+        if (cancelled) return;
+        console.error("Error accessing media devices:", error);
+        if (
+          error?.name === "NotFoundError" ||
+          error?.name === "OverconstrainedError"
+        ) {
+          setMediaError("No camera / microphone found");
+        } else if (error?.name === "NotAllowedError") {
+          setMediaError("Permission denied — allow camera/mic access");
+        } else {
+          setMediaError("Couldn't start camera / microphone");
+        }
+        setIsVideoEnabled(false);
+        setIsAudioEnabled(false);
       });
-    } catch (error) {
-      const err = error as DOMException;
-      console.error("Error accessing media devices:", err);
-      if (err?.name === "NotFoundError" || err?.name === "OverconstrainedError") {
-        setMediaError("No camera / microphone found");
-      } else if (err?.name === "NotAllowedError") {
-        setMediaError("Permission denied — allow camera/mic access");
-      } else {
-        setMediaError("Couldn't start camera / microphone");
-      }
-      setIsVideoEnabled(false);
-      setIsAudioEnabled(false);
-    }
-  };
 
-  const stopMedia = () => {
-    if (localStream) {
-      localStream.getTracks().forEach((track) => track.stop());
-      setLocalStream(null);
-    }
-
-    peerConnections.current.forEach((pc) => {
-      pc.close();
-    });
-    peerConnections.current.clear();
-    setRemoteStreams(new Map());
-  };
-
-  const createPeerConnection = (peerUserId: string) => {
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ],
-    });
-
-    if (localStream) {
-      localStream.getTracks().forEach((track) => {
-        pc.addTrack(track, localStream);
-      });
-    }
-
-    pc.ontrack = (event) => {
-      setRemoteStreams((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(peerUserId, event.streams[0]);
-        return newMap;
-      });
+    return () => {
+      cancelled = true;
     };
+  }, [isVideoEnabled, isAudioEnabled]);
 
-    pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        // ICE via Socket.io — placeholder
-      }
-    };
-
-    peerConnections.current.set(peerUserId, pc);
-  };
+  useEffect(
+    () => () => {
+      setLocalStream((prev) => {
+        prev?.getTracks().forEach((t) => t.stop());
+        return null;
+      });
+    },
+    []
+  );
 
   const toggleVideo = () => {
     setMediaError(null);
     setIsVideoEnabled((v) => !v);
   };
-
   const toggleAudio = () => {
     setMediaError(null);
     setIsAudioEnabled((a) => !a);
@@ -174,10 +173,16 @@ export default function VideoCall({
         : "border border-amber-500/35 bg-black/35 backdrop-blur-sm",
       on
         ? compact
-          ? "ring-2 ring-[#f5a22b]/60"
+          ? "ring-2 ring-[#f5a22b]/80"
           : "ring-2 ring-emerald-500/60 border-2"
-        : "opacity-80"
+        : "opacity-70"
     );
+
+  const remoteList = [...remotePeers.values()];
+  const remoteVideos = remoteList.filter((p) => p.hasVideo);
+  const connectedCount = remoteList.filter(
+    (p) => p.connState === "connected"
+  ).length;
 
   return (
     <div className={cn("flex items-center gap-2", compact && "relative")}>
@@ -186,6 +191,7 @@ export default function VideoCall({
           {mediaError}
         </div>
       )}
+
       <button
         type="button"
         onClick={toggleVideo}
@@ -196,78 +202,125 @@ export default function VideoCall({
         <img
           src={cameraIconSrc}
           alt=""
-          className={compact ? "w-6 h-6 object-contain" : "w-7 h-7 md:w-8 md:h-8 object-contain"}
+          className={
+            compact
+              ? "w-6 h-6 object-contain"
+              : "w-7 h-7 md:w-8 md:h-8 object-contain"
+          }
         />
       </button>
 
       <button
         type="button"
         onClick={toggleAudio}
-        className={btnClass(isAudioEnabled)}
-        title={isAudioEnabled ? "Mute microphone" : "Unmute microphone"}
+        className={cn(btnClass(isAudioEnabled), "relative")}
+        title={isAudioEnabled ? "Mute microphone" : "Talk (unmute mic)"}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={micIconSrc} alt="" className={compact ? "w-6 h-6 object-contain" : "w-7 h-7 md:w-8 md:h-8 object-contain"} />
+        <img
+          src={micIconSrc}
+          alt=""
+          className={
+            compact
+              ? "w-6 h-6 object-contain"
+              : "w-7 h-7 md:w-8 md:h-8 object-contain"
+          }
+        />
+        {isAudioEnabled && (
+          <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white animate-pulse" />
+        )}
+        {connectedCount > 0 && (
+          <span className="absolute -bottom-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#2563eb] px-0.5 text-[9px] font-bold text-white ring-2 ring-white">
+            {connectedCount}
+          </span>
+        )}
       </button>
 
-      {!compact &&
-        isVideoEnabled &&
-        (localStream || remoteStreams.size > 0) && (
-          <div className="fixed top-20 right-4 bg-black/80 backdrop-blur-sm rounded-lg p-2 shadow-2xl z-50">
-            <div className="grid grid-cols-2 gap-2">
-              {isVideoEnabled && localStream && (
-                <div className="relative">
-                  <video
-                    ref={localVideoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="w-24 h-16 object-cover rounded"
-                  />
-                  <div className="absolute bottom-1 left-1 text-xs bg-black/70 text-white px-1 rounded">
-                    You
-                  </div>
-                </div>
-              )}
-              {Array.from(remoteStreams.entries()).map(([peerUserId, stream]) => {
-                const player = players.find((p) => p.userId === peerUserId);
-                return (
-                  <RemoteVideoTile
-                    key={peerUserId}
-                    stream={stream}
-                    label={player?.username || "Player"}
-                  />
-                );
-              })}
+      {/* Hidden audio sinks so remote voices are actually heard. */}
+      {remoteList.map((p) => (
+        <RemoteAudio key={`a-${p.userId}`} peer={p} muted={!soundEnabled} />
+      ))}
+
+      {/* Floating video tiles (self + any remote cameras). */}
+      {(isVideoEnabled || remoteVideos.length > 0) && (
+        <div
+          className={cn(
+            "fixed z-50 grid gap-1.5 rounded-lg bg-black/70 p-1.5 shadow-2xl backdrop-blur-sm",
+            compact ? "right-2 top-24" : "right-4 top-20",
+            remoteVideos.length + (isVideoEnabled ? 1 : 0) > 1
+              ? "grid-cols-2"
+              : "grid-cols-1"
+          )}
+        >
+          {isVideoEnabled && localStream && (
+            <div className="relative">
+              <video
+                ref={localVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className="h-16 w-24 rounded object-cover"
+              />
+              <span className="absolute bottom-0.5 left-0.5 rounded bg-black/70 px-1 text-[9px] text-white">
+                You
+              </span>
             </div>
-          </div>
-        )}
+          )}
+          {remoteVideos.map((p) => (
+            <RemoteVideoTile
+              key={`v-${p.userId}`}
+              peer={p}
+              muted={!soundEnabled}
+              label={
+                players.find((x) => x.userId === p.userId)?.username || "Player"
+              }
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
+function RemoteAudio({ peer, muted }: { peer: RemotePeer; muted: boolean }) {
+  const ref = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    if (ref.current && ref.current.srcObject !== peer.stream) {
+      ref.current.srcObject = peer.stream;
+    }
+  }, [peer.stream]);
+  // Only mount when there is (or was) audio; video tiles carry their own audio.
+  if (!peer.hasAudio || peer.hasVideo) return null;
+  return <audio ref={ref} autoPlay playsInline muted={muted} />;
+}
+
 function RemoteVideoTile({
-  stream,
+  peer,
+  muted,
   label,
 }: {
-  stream: MediaStream;
+  peer: RemotePeer;
+  muted: boolean;
   label: string;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (ref.current) ref.current.srcObject = stream;
-  }, [stream]);
+    if (ref.current && ref.current.srcObject !== peer.stream) {
+      ref.current.srcObject = peer.stream;
+    }
+  }, [peer.stream]);
   return (
     <div className="relative">
       <video
         ref={ref}
         autoPlay
         playsInline
-        className="w-24 h-16 object-cover rounded"
+        muted={muted}
+        className="h-16 w-24 rounded object-cover"
       />
-      <div className="absolute bottom-1 left-1 text-xs bg-black/70 text-white px-1 rounded">
+      <span className="absolute bottom-0.5 left-0.5 rounded bg-black/70 px-1 text-[9px] text-white">
         {label}
-      </div>
+      </span>
     </div>
   );
 }

@@ -29,6 +29,12 @@ export interface Player {
   mustMove: boolean;
   /** Per-player roll; in CLASSIC only the current player has a value after rolling (mirrors diceValue). */
   diceValue: number | null;
+  /**
+   * Consecutive rolls this player has made while completely locked in base
+   * (all four pieces home) without rolling a six. Drives the "mercy" dice
+   * assist so a player can't be permanently stuck out of the game.
+   */
+  baseStuckStreak: number;
 }
 
 export interface LudoGameState {
@@ -80,6 +86,10 @@ export function normalizeGameState(raw: unknown): LudoGameState {
       typeof p.diceValue === "number" ? p.diceValue : null,
     hasRolled: !!p.hasRolled,
     canMove: !!p.canMove,
+    baseStuckStreak:
+      typeof p.baseStuckStreak === "number" && p.baseStuckStreak >= 0
+        ? p.baseStuckStreak
+        : 0,
     mustMove:
       typeof p.mustMove === "boolean"
         ? p.mustMove
@@ -160,6 +170,7 @@ export class LudoEngine {
       canMove: false,
       mustMove: false,
       diceValue: null,
+      baseStuckStreak: 0,
     }));
 
     return {
@@ -187,7 +198,7 @@ export class LudoEngine {
         throw new Error("You have already rolled the dice");
       }
 
-      const diceValue = Math.floor(Math.random() * 6) + 1;
+      const diceValue = this.rollDiceValue(player);
       player.diceValue = diceValue;
       player.hasRolled = true;
       const moves = this.getAvailableMovesWithDice(player.id, diceValue);
@@ -202,12 +213,41 @@ export class LudoEngine {
     const currentPlayer = this.state.players[this.state.currentTurn];
     if (currentPlayer.id !== playerId) throw new Error("Not your turn");
 
-    const diceValue = Math.floor(Math.random() * 6) + 1;
+    const diceValue = this.rollDiceValue(player);
     this.state.diceValue = diceValue;
     player.diceValue = diceValue;
     player.hasRolled = true;
     player.canMove = this.canPlayerMove(player, diceValue);
     return diceValue;
+  }
+
+  /**
+   * Roll a die for a player. Fair 1/6 odds normally, but when a player has been
+   * stuck with all four pieces in base for several turns the chance of a six is
+   * quietly raised so they can get into the game. The ramp is gradual (never a
+   * guaranteed six) and the exact same rule applies to every player, human or
+   * AI — so it reads as a house "mercy" rule, not a script.
+   */
+  private rollDiceValue(player: Player): number {
+    const lockedInBase = player.pieces.every((p) => p.isHome);
+    const streak = lockedInBase ? player.baseStuckStreak : 0;
+
+    let value: number;
+    if (streak >= 2) {
+      // streak 2 → ~32%, 3 → ~47%, 4 → ~62%, 5 → ~77%, 6+ → capped 85%
+      const sixChance = Math.min(0.85, 1 / 6 + (streak - 1) * 0.15);
+      value =
+        Math.random() < sixChance ? 6 : Math.floor(Math.random() * 5) + 1;
+    } else {
+      value = Math.floor(Math.random() * 6) + 1;
+    }
+
+    if (value === 6 || !lockedInBase) {
+      player.baseStuckStreak = 0;
+    } else {
+      player.baseStuckStreak += 1;
+    }
+    return value;
   }
 
   private resetRushPlayerAction(player: Player): void {

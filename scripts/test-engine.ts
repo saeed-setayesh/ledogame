@@ -109,6 +109,56 @@ console.log("Turn-timer auto-advance plays or skips the turn");
   );
 }
 
+console.log("Anti-lockout: a player stuck in base gets out within a few turns");
+{
+  // Real RNG, many trials — measure how long until the first 6 for a locked player.
+  const trials = 400;
+  let sum = 0;
+  let worst = 0;
+  for (let t = 0; t < trials; t++) {
+    const e = newGame();
+    let turns = 0;
+    // Simulate only player 0 rolling repeatedly while fully locked in base.
+    for (let i = 0; i < 50; i++) {
+      turns++;
+      const v = e.rollDice("p0");
+      if (v === 6) break;
+      // emulate "turn passes back" — reset per-turn flags but keep streak
+      const s = e.getState();
+      s.players[0].hasRolled = false;
+      s.players[0].diceValue = null;
+      s.currentTurn = 0;
+      e.setState(s);
+    }
+    sum += turns;
+    worst = Math.max(worst, turns);
+  }
+  const avg = sum / trials;
+  check(`avg turns to first six ≈ ${avg.toFixed(1)} (fair would be ~6)`, avg < 6);
+  check(`worst case ${worst} turns is bounded (< 15)`, worst < 15);
+}
+
+console.log("Anti-lockout: a player with a piece on the board keeps fair 1/6 odds");
+{
+  const e = newGame();
+  const st = e.getState();
+  st.players[0].pieces[0] = { id: 0, position: 5, color: "RED", isHome: false, isFinished: false };
+  st.players[0].baseStuckStreak = 9; // pretend a long streak
+  st.currentTurn = 0;
+  e.setState(st);
+  let sixes = 0;
+  for (let i = 0; i < 600; i++) {
+    const s = e.getState();
+    s.players[0].hasRolled = false;
+    s.players[0].diceValue = null;
+    s.currentTurn = 0;
+    e.setState(s);
+    if (e.rollDice("p0") === 6) sixes++;
+  }
+  const rate = sixes / 600;
+  check(`six rate with a piece out ≈ ${(rate * 100).toFixed(0)}% (fair ~17%)`, rate < 0.28);
+}
+
 function withDiceReturn<T>(value: number, fn: () => T): T {
   const orig = Math.random;
   Math.random = () => (value - 1) / 6 + 1e-9;

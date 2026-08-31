@@ -1,6 +1,7 @@
 import { Server as HTTPServer } from "http"
 import { Server as SocketIOServer } from "socket.io"
 import { gameHandlers, scheduleTurnTimer, handleSocketDisconnect } from "./game-handler"
+import { webrtcHandlers, webrtcHandleDisconnect } from "./webrtc-handler"
 import { setStateChangeListener } from "@/lib/game/game-state"
 
 let io: SocketIOServer | null = null
@@ -29,9 +30,11 @@ export function initializeSocket(server: HTTPServer) {
 
     // Handle game events
     gameHandlers(socket, io!)
+    webrtcHandlers(socket, io!)
 
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`)
+      webrtcHandleDisconnect(socket, io!)
       handleSocketDisconnect(socket, io!)
     })
   })

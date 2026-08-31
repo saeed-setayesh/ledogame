@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { getSocket } from "@/lib/socket/client";
 import LudoBoard from "./LudoBoard";
 import GameNotification from "./GameNotification";
-import VideoCall, { type LocalVideoState } from "../video/VideoCall";
+import VideoCall, {
+  type LocalVideoState,
+  type PeerAudioState,
+} from "../video/VideoCall";
 import ScreenRecorder from "./ScreenRecorder";
 import Dice from "./Dice";
 import {
@@ -167,6 +170,8 @@ function PlayerCard({
   game,
   gameState,
   localVideo,
+  peerAudio,
+  myMicOn,
 }: {
   player: {
     userId: string;
@@ -181,7 +186,11 @@ function PlayerCard({
   game: GameView;
   gameState: LudoGameState;
   localVideo: LocalVideoState | null;
+  peerAudio: PeerAudioState[];
+  myMicOn: boolean;
 }) {
+  const peer = peerAudio.find((p) => p.userId === player.userId);
+  const voiceOn = isMe ? myMicOn : !!peer?.speakingAudio;
   const gamePlayer = game?.players?.find((p) => p.userId === player.userId);
   const user = gamePlayer?.user;
   const username =
@@ -218,6 +227,14 @@ function PlayerCard({
           title={`${username}'s die`}
         >
           {rushDieValue ?? "–"}
+        </div>
+      )}
+      {voiceOn && (
+        <div
+          className="absolute -left-0.5 top-0.5 z-20 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-[10px] ring-2 ring-white shadow"
+          title={isMe ? "Your mic is on" : `${username} is on voice`}
+        >
+          🎤
         </div>
       )}
       <div
@@ -358,11 +375,40 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   const [localVideo, setLocalVideo] = useState<LocalVideoState | null>(null);
   const [finishInfo, setFinishInfo] = useState<FinishInfo | null>(null);
   const [bonusToast, setBonusToast] = useState<string | null>(null);
+  const [peerAudio, setPeerAudio] = useState<PeerAudioState[]>([]);
+  const [micOn, setMicOn] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const gameStateRef = useRef<LudoGameState | null>(null);
 
   useEffect(() => {
     gameStateRef.current = gameState;
   }, [gameState]);
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem("ludino:soundEnabled");
+      if (v !== null) setSoundEnabled(v === "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((s) => {
+      const next = !s;
+      try {
+        localStorage.setItem("ludino:soundEnabled", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
+  const handlePeersChange = useCallback(
+    (peers: PeerAudioState[]) => setPeerAudio(peers),
+    []
+  );
 
   const turnActive = gameState?.gameStatus === "ACTIVE";
   const secondsLeft = useSecondsLeft(
@@ -372,7 +418,11 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   useEffect(() => {
     const socket = getSocket();
 
-    socket.emit("game:join", { gameId: game.id, userId: currentUserId });
+    const joinGame = () =>
+      socket.emit("game:join", { gameId: game.id, userId: currentUserId });
+    joinGame();
+    // Re-join and re-sync after any socket reconnect (server restart, network drop).
+    socket.on("connect", joinGame);
 
     socket.on(
       "game:state",
@@ -471,6 +521,7 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
 
     return () => {
       socket.emit("game:leave", { gameId: game.id, userId: currentUserId });
+      socket.off("connect", joinGame);
       socket.off("game:state");
       socket.off("game:dice-rolled");
       socket.off("game:piece-moved");
@@ -683,8 +734,14 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
                 >
                   Lobby
                 </DropdownMenu.Item>
-                <DropdownMenu.Item className="px-3 py-2 rounded-lg cursor-default outline-none hover:bg-white/10">
-                  Sound (coming soon)
+                <DropdownMenu.Item
+                  className="px-3 py-2 rounded-lg cursor-default outline-none hover:bg-white/10 flex items-center gap-2"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    toggleSound();
+                  }}
+                >
+                  {soundEnabled ? "🔊" : "🔇"} Voice chat: {soundEnabled ? "On" : "Off"}
                 </DropdownMenu.Item>
                 {isPracticeMode && (
                   <DropdownMenu.Item className="px-3 py-2 rounded-lg cursor-default outline-none text-white/50">
@@ -751,6 +808,8 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
                 game={game}
                 gameState={gameState}
                 localVideo={localVideo}
+                peerAudio={peerAudio}
+                myMicOn={micOn}
               />
             ))}
           </div>
@@ -777,6 +836,8 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
                 game={game}
                 gameState={gameState}
                 localVideo={localVideo}
+                peerAudio={peerAudio}
+                myMicOn={micOn}
               />
             ))}
           </div>
@@ -792,7 +853,10 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
             gameId={game.id}
             userId={currentUserId}
             compact
+            soundEnabled={soundEnabled}
             onLocalVideoChange={setLocalVideo}
+            onMicChange={setMicOn}
+            onPeersChange={handlePeersChange}
             players={
               game.players?.map((p) => ({
                 id: p.id,
