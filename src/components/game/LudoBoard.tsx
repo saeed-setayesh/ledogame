@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { LudoGameState, PlayerColor } from "@/lib/game/ludo-engine";
 import {
   HOME_LANE_CELLS,
@@ -198,6 +198,19 @@ export default function LudoBoard({
       ? isMyTurnProp
       : playerIndex !== -1 && gameState.currentTurn === playerIndex;
 
+  // Briefly flag the piece that just moved (any player) so it's easy to follow.
+  const lm = gameState.lastMove;
+  const lmKey = lm ? `${lm.playerId}:${lm.pieceMoved}:${lm.toPosition}` : "";
+  const [movedKey, setMovedKey] = useState("");
+  const lmKeyRef = useRef("");
+  useEffect(() => {
+    if (!lmKey || lmKey === lmKeyRef.current) return;
+    lmKeyRef.current = lmKey;
+    setMovedKey(lmKey);
+    const t = setTimeout(() => setMovedKey(""), 1200);
+    return () => clearTimeout(t);
+  }, [lmKey]);
+
   return (
     <div
       className="relative overflow-hidden rounded-[7%] border-[clamp(8px,2.2vw,16px)] border-[#7a3c16] shadow-2xl"
@@ -234,25 +247,35 @@ export default function LudoBoard({
 
       <CenterHome />
 
-      {gameState.players.map((player) =>
-        player.pieces.map((piece) => (
-          <GamePiece
-            key={`${player.id}-${piece.id}`}
-            pieceId={piece.id}
-            color={player.color}
-            position={piece.position}
-            isHome={piece.isHome}
-            isFinished={piece.isFinished}
-            onClick={() => {
-              if (isMyTurn && availableMoves.includes(piece.id) && onMovePiece) {
-                onMovePiece(piece.id);
-              }
-            }}
-            selected={false}
-            canMove={isMyTurn && availableMoves.includes(piece.id)}
-          />
-        ))
-      )}
+      {gameState.players.map((player) => {
+        // availableMoves is a bare list of piece ids (0-3) — it only applies to
+        // *my* pieces, never an opponent's piece that happens to share an id.
+        const isMine = player.userId === currentUserId;
+        return player.pieces.map((piece) => {
+          const canMove =
+            isMine && isMyTurn && availableMoves.includes(piece.id);
+          const justMoved =
+            !!movedKey &&
+            lm?.playerId === player.id &&
+            lm?.pieceMoved === piece.id;
+          return (
+            <GamePiece
+              key={`${player.id}-${piece.id}`}
+              pieceId={piece.id}
+              color={player.color}
+              position={piece.position}
+              isHome={piece.isHome}
+              isFinished={piece.isFinished}
+              onClick={() => {
+                if (canMove && onMovePiece) onMovePiece(piece.id);
+              }}
+              selected={false}
+              canMove={canMove}
+              justMoved={justMoved}
+            />
+          );
+        });
+      })}
     </div>
   );
 }

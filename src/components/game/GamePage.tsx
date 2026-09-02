@@ -5,17 +5,18 @@ import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { getSocket } from "@/lib/socket/client";
 import LudoBoard from "./LudoBoard";
-import GameNotification from "./GameNotification";
 import VideoCall, {
   type LocalVideoState,
   type PeerAudioState,
 } from "../video/VideoCall";
 import ScreenRecorder from "./ScreenRecorder";
 import Dice from "./Dice";
+import { cn } from "@/lib/utils";
 import {
   LudoGameState,
   PlayerColor,
 } from "@/lib/game/ludo-engine";
+import { FINISH_PROGRESS } from "@/lib/game/ludo-track-cells";
 import { AIPlayer } from "@/lib/game/ai-player";
 import Image from "next/image";
 import Link from "next/link";
@@ -87,6 +88,42 @@ function isMyRollTurn(state: LudoGameState, userId: string): boolean {
     return state.currentTurn === idx && !me.hasRolled;
   }
   return false;
+}
+
+/**
+ * Which of my pieces can move right now, computed straight from game state.
+ * The server also broadcasts this, but its per-user targeting is unreliable in
+ * RUSH (parallel play) — deriving it locally keeps my highlights correct
+ * regardless of what other players are doing.
+ */
+function getMyAvailableMoves(
+  state: LudoGameState,
+  userId: string
+): number[] {
+  const idx = state.players.findIndex((p) => p.userId === userId);
+  if (idx === -1) return [];
+  const me = state.players[idx];
+
+  let dice: number | null;
+  if (state.gameMode === "RUSH") {
+    if (!me.mustMove || !me.hasRolled) return [];
+    dice = me.diceValue;
+  } else {
+    if (state.currentTurn !== idx || !me.hasRolled) return [];
+    dice = state.diceValue ?? me.diceValue ?? null;
+  }
+  if (dice == null) return [];
+
+  const moves: number[] = [];
+  for (const pc of me.pieces) {
+    if (pc.isFinished) continue;
+    if (pc.isHome) {
+      if (dice === 6) moves.push(pc.id);
+    } else if (pc.position >= 0 && pc.position + dice <= FINISH_PROGRESS) {
+      moves.push(pc.id);
+    }
+  }
+  return moves;
 }
 
 function isMyMoveTurn(state: LudoGameState, userId: string): boolean {
@@ -204,12 +241,27 @@ function PlayerCard({
   const showLive =
     isMe && localVideo?.enabled && localVideo.stream && isVideoLive(localVideo.stream);
 
-  // RUSH: every player has their own die on screen (parallel play).
-  const rushDieValue =
-    gameState.gameMode === "RUSH" && (player.hasRolled || player.mustMove)
-      ? player.diceValue ?? null
-      : null;
-  const showRushDie = gameState.gameMode === "RUSH";
+  // Show each player their own die.
+  //  RUSH: always visible (parallel play).
+  //  CLASSIC: on the player whose turn it is, so you can see the bot / opponent
+  //  roll and what number they got.
+  const isCurrentTurn =
+    gameState.players[gameState.currentTurn]?.userId === player.userId;
+  const showDie =
+    gameState.gameMode === "RUSH" || (gameState.gameMode === "CLASSIC" && isCurrentTurn);
+  const dieValue =
+    gameState.gameMode === "RUSH"
+      ? player.hasRolled || player.mustMove
+        ? player.diceValue ?? null
+        : null
+      : isCurrentTurn
+        ? player.diceValue ?? gameState.diceValue ?? null
+        : null;
+  const dieRolling =
+    showDie &&
+    dieValue === null &&
+    (isCurrentTurn || player.mustMove) &&
+    !player.hasRolled;
 
   return (
     <div
@@ -220,13 +272,16 @@ function PlayerCard({
           : "none",
       }}
     >
-      {showRushDie && (
+      {showDie && (
         <div
-          className="absolute left-[2.6rem] top-[2.6rem] z-20 flex h-6 w-6 items-center justify-center rounded-md border-2 bg-white text-[11px] font-serif font-bold leading-none text-[#2b2b2b] shadow-[0_1px_4px_rgba(0,0,0,0.55)]"
+          className={cn(
+            "absolute left-[2.6rem] top-[2.6rem] z-20 flex h-6 w-6 items-center justify-center rounded-md border-2 bg-white text-[11px] font-serif font-bold leading-none text-[#2b2b2b] shadow-[0_1px_4px_rgba(0,0,0,0.55)]",
+            dieRolling && "animate-pulse"
+          )}
           style={{ borderColor: COLOR_MAP[player.color] }}
           title={`${username}'s die`}
         >
-          {rushDieValue ?? "–"}
+          {dieValue ?? "🎲"}
         </div>
       )}
       {voiceOn && (
@@ -375,14 +430,33 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   const [localVideo, setLocalVideo] = useState<LocalVideoState | null>(null);
   const [finishInfo, setFinishInfo] = useState<FinishInfo | null>(null);
   const [bonusToast, setBonusToast] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const [peerAudio, setPeerAudio] = useState<PeerAudioState[]>([]);
   const [micOn, setMicOn] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const gameStateRef = useRef<LudoGameState | null>(null);
 
+  // Derive my movable pieces from state on every update — authoritative and
+  // race-free (works for RUSH parallel play, unlike the server's per-user push).
   useEffect(() => {
-    gameStateRef.current = gameState;
-  }, [gameState]);
+    if (!gameState || gameState.gameStatus !== "ACTIVE") {
+      setAvailableMoves([]);
+      return;
+    }
+    const moves = getMyAvailableMoves(gameState, currentUserId);
+    setAvailableMoves(moves);
+
+    const myIdx = gameState.players.findIndex(
+      (p) => p.userId === currentUserId
+    );
+    const me = myIdx >= 0 ? gameState.players[myIdx] : null;
+    const iAmStuck =
+      gameState.gameMode === "CLASSIC" &&
+      gameState.currentTurn === myIdx &&
+      !!me?.hasRolled &&
+      gameState.diceValue !== null &&
+      moves.length === 0;
+    setShowNoMovesNotification(iAmStuck);
+  }, [gameState, currentUserId]);
 
   useEffect(() => {
     try {
@@ -416,6 +490,27 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   );
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    (window as unknown as Record<string, unknown>).__ludo = {
+      gameState,
+      availableMoves,
+      currentUserId,
+      finishInfo,
+      roll: () =>
+        getSocket().emit("game:roll-dice", {
+          gameId: game.id,
+          userId: currentUserId,
+        }),
+      move: (pieceId: number) =>
+        getSocket().emit("game:move-piece", {
+          gameId: game.id,
+          userId: currentUserId,
+          pieceId,
+        }),
+    };
+  }, [gameState, availableMoves, currentUserId, finishInfo, game.id]);
+
+  useEffect(() => {
     const socket = getSocket();
 
     const joinGame = () =>
@@ -424,30 +519,21 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
     // Re-join and re-sync after any socket reconnect (server restart, network drop).
     socket.on("connect", joinGame);
 
+    // availableMoves is derived from gameState in a separate effect, so these
+    // handlers only need to keep gameState fresh.
     socket.on(
       "game:state",
       ({ gameState: state }: { gameState: LudoGameState }) => {
         setGameState(state);
-        if (!isMyMoveTurn(state, currentUserId)) {
-          setAvailableMoves([]);
-        }
       }
     );
 
     socket.on("game:dice-rolled", ({ state }: { state: LudoGameState }) => {
       setGameState(state);
-      if (state.gameMode === "RUSH" && !isMyMoveTurn(state, currentUserId)) {
-        setAvailableMoves([]);
-      } else if (!isMyMoveTurn(state, currentUserId)) {
-        setAvailableMoves([]);
-      }
     });
 
     socket.on("game:piece-moved", ({ state }: { state: LudoGameState }) => {
       setGameState(state);
-      if (!isMyMoveTurn(state, currentUserId)) {
-        setAvailableMoves([]);
-      }
       const lm = state.lastMove;
       if (lm && lm.bonusRoll && lm.playerId) {
         const mover = state.players.find((p) => p.id === lm.playerId);
@@ -466,57 +552,20 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
 
     socket.on("game:finished", (info: FinishInfo) => {
       setFinishInfo(info);
-      setAvailableMoves([]);
     });
 
-    socket.on(
-      "game:available-moves",
-      (payload: { moves: number[]; forUserId?: string | null }) => {
-        const { moves, forUserId } = payload;
-        const st = gameStateRef.current;
-
-        if (forUserId === null) {
-          setAvailableMoves([]);
-          return;
-        }
-        if (forUserId !== undefined) {
-          if (forUserId !== currentUserId) {
-            setAvailableMoves([]);
-            return;
-          }
-          setAvailableMoves(moves);
-          if (
-            moves.length === 0 &&
-            st?.gameMode === "CLASSIC" &&
-            st.diceValue !== null
-          ) {
-            setShowNoMovesNotification(true);
-          }
-          return;
-        }
-
-        if (!st) {
-          setAvailableMoves(moves);
-          return;
-        }
-        if (isMyMoveTurn(st, currentUserId)) {
-          setAvailableMoves(moves);
-          if (
-            moves.length === 0 &&
-            st.gameMode === "CLASSIC" &&
-            st.diceValue !== null
-          ) {
-            setShowNoMovesNotification(true);
-          }
-        } else {
-          setAvailableMoves([]);
-        }
-      }
-    );
-
     socket.on("game:error", ({ message }: { message: string }) => {
-      console.error("[Client] Game error:", message);
-      alert(message);
+      console.warn("[Client] Game error:", message);
+      // Timing races (double-tap, turn just changed) produce these constantly —
+      // they're self-correcting, so don't nag the player with a popup.
+      const benign =
+        /not your turn|must roll|already rolled|roll the dice|must move/i.test(
+          message
+        );
+      if (!benign) {
+        setErrorToast(message);
+        window.setTimeout(() => setErrorToast(null), 3000);
+      }
     });
 
     return () => {
@@ -526,7 +575,6 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
       socket.off("game:dice-rolled");
       socket.off("game:piece-moved");
       socket.off("game:finished");
-      socket.off("game:available-moves");
       socket.off("game:error");
     };
   }, [game.id, currentUserId]);
@@ -778,6 +826,12 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
         </div>
       )}
 
+      {errorToast && (
+        <div className="pointer-events-none absolute left-1/2 top-24 z-50 -translate-x-1/2 whitespace-nowrap rounded-full bg-red-600/95 px-4 py-1.5 text-sm font-bold text-white shadow-lg">
+          {errorToast}
+        </div>
+      )}
+
       {finishInfo && (
         <FinishOverlay
           info={finishInfo}
@@ -786,13 +840,11 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
         />
       )}
 
-      <GameNotification
-        message="No moves available - Turn will skip"
-        type="warning"
-        duration={2500}
-        show={showNoMovesNotification}
-        onClose={() => setShowNoMovesNotification(false)}
-      />
+      {showNoMovesNotification && (
+        <div className="pointer-events-none absolute left-1/2 top-24 z-50 -translate-x-1/2 whitespace-nowrap rounded-full bg-amber-500/95 px-4 py-1.5 text-sm font-bold text-white shadow-lg">
+          No moves — turn skips
+        </div>
+      )}
 
       {/* ── Main area: players + board ── */}
       <div className="relative z-10 flex-1 flex flex-col min-h-0 items-center justify-center gap-2 px-3 max-w-[560px] mx-auto w-full">

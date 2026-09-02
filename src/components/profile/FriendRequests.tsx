@@ -30,6 +30,7 @@ export default function FriendRequests({
 }: FriendRequestsProps) {
   const [requests, setRequests] = useState<FriendRequest[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [sentRequests, setSentRequests] = useState<Friend[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
   const [friendUsername, setFriendUsername] = useState("");
@@ -51,6 +52,7 @@ export default function FriendRequests({
 
       setRequests(requestsData.requests || []);
       setFriends(friendsData.friends || []);
+      setSentRequests(friendsData.sentRequests || []);
     } catch (error) {
       console.error("Failed to fetch friends data:", error);
     } finally {
@@ -258,6 +260,42 @@ export default function FriendRequests({
           </button>
         </div>
       </div>
+
+      {/* Sent (pending) requests */}
+      {sentRequests.length > 0 && (
+        <div className="game-card space-y-3">
+          <div className="flex items-center gap-2 mb-2">
+            <CircleDot className="w-5 h-5 text-amber-400" />
+            <h3 className="text-xl font-semibold text-white/95">
+              Pending Requests
+            </h3>
+            <span className="px-2 py-1 bg-amber-500/15 text-amber-300 rounded-full text-xs font-semibold">
+              {sentRequests.length}
+            </span>
+          </div>
+          {sentRequests.map((p) => (
+            <div
+              key={p.id}
+              className="flex items-center gap-3 p-3 rounded-xl bg-black/25 border border-white/10"
+            >
+              <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-xl">
+                {p.avatar || "👤"}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-white/90 truncate">
+                  {p.username}
+                </div>
+                <div className="text-xs text-white/50">
+                  Waiting for them to accept…
+                </div>
+              </div>
+              <span className="text-xs text-amber-300/80 font-medium">
+                Pending
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Friends List */}
       <div className="game-card space-y-4">

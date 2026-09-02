@@ -43,7 +43,25 @@ export async function GET() {
       }
     })
 
-    return NextResponse.json({ friends })
+    // Outgoing friend requests this user has sent that are still pending.
+    const sentPending = await prisma.friend.findMany({
+      where: { userId: user.id, status: "PENDING" },
+      include: {
+        friend: {
+          select: { id: true, username: true, avatar: true, level: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    })
+
+    const sentRequests = sentPending.map((f) => ({
+      id: f.friend.id,
+      username: f.friend.username,
+      avatar: f.friend.avatar,
+      level: f.friend.level,
+    }))
+
+    return NextResponse.json({ friends, sentRequests })
   } catch (error: any) {
     console.error("List friends error:", error)
     return NextResponse.json(

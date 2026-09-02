@@ -720,85 +720,84 @@ async function processAITurn(gameId: string, io: SocketIOServer) {
     }
 
     if (state.gameMode === "RUSH") {
-      const aiPlayer = state.players.find(
-        (p) =>
-          AIPlayer.isAIPlayer(p.userId) &&
-          (p.mustMove || (!p.hasRolled && !p.mustMove))
-      );
-      if (!aiPlayer) {
-        return;
-      }
+      // RUSH is parallel play — advance EVERY AI that needs an action this pass,
+      // one small step each, so no bot is starved while another keeps rolling.
+      const aiIds = state.players
+        .filter((p) => AIPlayer.isAIPlayer(p.userId))
+        .map((p) => p.id);
 
-      await new Promise((resolve) =>
-        setTimeout(resolve, 600 + Math.random() * 600)
-      );
+      let anyActed = false;
+      let gameFinished = false;
 
-      if (aiPlayer.mustMove) {
-        const decision = AIPlayer.makeDecision(
-          engine,
-          state,
-          aiPlayer.id
+      for (const aiId of aiIds) {
+        let cur = getGameState(gameId);
+        if (!cur || cur.gameStatus !== "ACTIVE") {
+          gameFinished = true;
+          break;
+        }
+        const ai = cur.players.find((p) => p.id === aiId);
+        if (!ai) continue;
+
+        // Deliberately human-paced so a person can keep up in RUSH.
+        await new Promise((resolve) =>
+          setTimeout(resolve, 850 + Math.random() * 900)
         );
 
-        if (decision.action === "move" && decision.pieceId !== undefined) {
-          const isGameFinished = engine.movePiece(
-            aiPlayer.id,
-            decision.pieceId
-          );
+        if (ai.mustMove) {
+          const moves = engine.getAvailableMoves(aiId);
+          const decision =
+            moves.length > 0
+              ? AIPlayer.makeDecision(engine, cur, aiId)
+              : { action: "roll" as const };
+          if (decision.action === "move" && decision.pieceId !== undefined) {
+            const finished = engine.movePiece(aiId, decision.pieceId);
+            const newState = engine.getState();
+            await updateGameState(gameId, newState);
+            await prisma.gameMove.create({
+              data: {
+                gameId,
+                playerId: ai.userId,
+                diceRoll: newState.lastMove?.diceRoll || 0,
+                moveType: "PIECE_MOVE",
+                fromPosition: newState.lastMove?.fromPosition || 0,
+                toPosition: newState.lastMove?.toPosition || 0,
+              },
+            });
+            io.to(`game:${gameId}`).emit("game:piece-moved", {
+              playerId: aiId,
+              pieceId: decision.pieceId,
+              state: newState,
+            });
+            anyActed = true;
+            if (finished && newState.winnerId) {
+              await handleGameFinish(gameId, newState.winnerId, io);
+              gameFinished = true;
+              break;
+            }
+          } else {
+            // Can't move (piece captured mid-round etc.) — release the lock.
+            engine.forceRushSkip(aiId);
+            await updateGameState(gameId, engine.getState());
+            io.to(`game:${gameId}`).emit("game:state", {
+              gameState: getGameState(gameId),
+            });
+            anyActed = true;
+          }
+        } else if (!ai.hasRolled) {
+          const diceValue = engine.rollDice(aiId);
           const newState = engine.getState();
           await updateGameState(gameId, newState);
-
-          await prisma.gameMove.create({
-            data: {
-              gameId,
-              playerId: aiPlayer.userId,
-              diceRoll: newState.lastMove?.diceRoll || 0,
-              moveType: "PIECE_MOVE",
-              fromPosition: newState.lastMove?.fromPosition || 0,
-              toPosition: newState.lastMove?.toPosition || 0,
-            },
-          });
-
-          io.to(`game:${gameId}`).emit("game:piece-moved", {
-            playerId: aiPlayer.id,
-            pieceId: decision.pieceId,
+          io.to(`game:${gameId}`).emit("game:dice-rolled", {
+            playerId: aiId,
+            diceValue,
             state: newState,
           });
-
-          io.to(`game:${gameId}`).emit("game:available-moves", {
-            moves: [],
-            forUserId: aiPlayer.userId,
-          });
-
-          if (isGameFinished && newState.winnerId) {
-            await handleGameFinish(gameId, newState.winnerId, io);
-          } else {
-            setTimeout(() => void processAITurn(gameId, io), 200);
-          }
+          anyActed = true;
         }
-        return;
       }
 
-      const diceValue = engine.rollDice(aiPlayer.id);
-      state = engine.getState();
-      await updateGameState(gameId, state);
-
-      io.to(`game:${gameId}`).emit("game:dice-rolled", {
-        playerId: aiPlayer.id,
-        diceValue,
-        state,
-      });
-
-      const moves = engine.getAvailableMoves(aiPlayer.id);
-      io.to(`game:${gameId}`).emit("game:available-moves", {
-        moves,
-        forUserId: aiPlayer.userId,
-      });
-
-      if (moves.length > 0) {
-        setTimeout(() => void processAITurn(gameId, io), 400);
-      } else {
-        setTimeout(() => void processAITurn(gameId, io), 200);
+      if (!gameFinished && anyActed) {
+        setTimeout(() => void processAITurn(gameId, io), 900);
       }
       return;
     }
@@ -961,9 +960,10 @@ export async function handleSocketDisconnect(
   }
 }
 
-// Debounce forfeit resolution so a refresh / brief disconnect doesn't end a game.
+// Debounce forfeit resolution so a refresh / phone backgrounding / brief
+// network drop doesn't end a game the player is still in.
 const forfeitTimers = new Map<string, NodeJS.Timeout>();
-const FORFEIT_GRACE_MS = 12_000;
+const FORFEIT_GRACE_MS = 45_000;
 
 function maybeFinishOnForfeit(gameId: string, io: SocketIOServer) {
   const existing = forfeitTimers.get(gameId);
@@ -1003,11 +1003,17 @@ async function resolveForfeit(gameId: string, io: SocketIOServer) {
     (p) => p.status === "ACTIVE" || p.status === "FINISHED"
   );
 
-  // Practice / single-human games (1 human vs AI) are not forfeitable — the
-  // human simply left, so just stop the game without a "winner".
   const isMultiHuman = humans.length >= 2;
+  const isPaid = parseFloat(game.entryFee.toString()) > 0;
 
   if (humans.length > 0 && activeHumans.length === 0) {
+    // Free / practice games: never auto-end. Leave it ACTIVE so it just
+    // resumes if the player comes back; nobody loses anything by walking away.
+    if (!isPaid) {
+      clearTurnTimer(gameId);
+      return;
+    }
+    // Paid game genuinely abandoned by everyone → cancel + refund.
     await refundGameEntryFees(gameId, "All players left the game").catch(
       (e) => console.error(`[Game ${gameId}] refund failed:`, e)
     );

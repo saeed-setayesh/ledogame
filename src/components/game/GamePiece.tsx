@@ -15,6 +15,8 @@ interface GamePieceProps {
   onClick?: () => void;
   selected?: boolean;
   canMove?: boolean;
+  /** Briefly ring the piece that just moved so movement is easy to follow. */
+  justMoved?: boolean;
 }
 
 /**
@@ -104,6 +106,7 @@ export default function GamePiece({
   onClick,
   selected,
   canMove,
+  justMoved,
 }: GamePieceProps) {
   if (isFinished) return null;
 
@@ -129,11 +132,16 @@ export default function GamePiece({
         background: "transparent",
         border: "none",
         padding: 0,
+        // Only a movable piece captures taps — otherwise a non-movable piece
+        // stacked on top would swallow the tap meant for the piece beneath it.
+        pointerEvents: canMove ? "auto" : "none",
+        // Glide to the new cell instead of teleporting, so moves are followable.
+        transition:
+          "left 0.35s ease, top 0.35s ease, transform 0.2s ease",
       }}
       className={cn(
         "no-touch-min touch-manipulation select-none",
         canMove ? "cursor-pointer" : "cursor-default disabled:cursor-default",
-        "transition-transform duration-200",
         canMove && "hover:scale-110 active:scale-105 animate-pulse-glow",
         selected && "scale-110",
         !canMove && "opacity-95"
@@ -149,6 +157,9 @@ export default function GamePiece({
       />
       {canMove && (
         <span className="absolute inset-0 rounded-full bg-white/20 animate-ping pointer-events-none" />
+      )}
+      {justMoved && !canMove && (
+        <span className="absolute -inset-1 rounded-full ring-2 ring-white/90 animate-ping pointer-events-none" />
       )}
     </button>
   );

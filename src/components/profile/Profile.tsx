@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { formatUSDT } from "@/lib/utils";
 import {
   Trophy,
@@ -49,9 +50,17 @@ const tabs = [
 ] as const;
 
 export default function ProfileComponent({ user }: ProfileProps) {
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab");
   const [activeTab, setActiveTab] = useState<
     "overview" | "games" | "friends" | "customize"
-  >("overview");
+  >(
+    tabParam === "games" ||
+      tabParam === "friends" ||
+      tabParam === "customize"
+      ? tabParam
+      : "overview"
+  );
 
   const xpForNextLevel = user.level * 1000;
   const xpProgress = (user.xp % 1000) / 1000;
