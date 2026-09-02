@@ -271,6 +271,13 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         });
 
         if (!AIPlayer.isAIPlayer(userId)) {
+          const others = await io.in(`game:${gameId}`).fetchSockets();
+          const someoneElseHere = others.some(
+            (s) =>
+              !AIPlayer.isAIPlayer(s.data?.userId as string) &&
+              s.id !== socket.id
+          );
+          if (!someoneElseHere) clearTurnTimer(gameId);
           maybeFinishOnForfeit(gameId, io);
         }
       }
@@ -954,6 +961,15 @@ export async function handleSocketDisconnect(
       data: { status: "OFFLINE", leftAt: new Date() },
     });
     socket.to(`game:${gameId}`).emit("game:player-left", { userId });
+
+    // In a solo (practice) game there is nobody else waiting, so freeze the
+    // turn timer immediately — don't burn the player's turns while they're away.
+    const others = await io.in(`game:${gameId}`).fetchSockets();
+    const someoneElseHere = others.some(
+      (s) => !AIPlayer.isAIPlayer(s.data?.userId as string) && s.id !== socket.id
+    );
+    if (!someoneElseHere) clearTurnTimer(gameId);
+
     maybeFinishOnForfeit(gameId, io);
   } catch (err) {
     console.error(`[Game ${gameId}] disconnect handler error:`, err);

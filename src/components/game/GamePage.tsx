@@ -490,7 +490,9 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
   );
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || process.env.NODE_ENV === "production") {
+      return;
+    }
     (window as unknown as Record<string, unknown>).__ludo = {
       gameState,
       availableMoves,
