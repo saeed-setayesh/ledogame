@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { UserPlus, UserCheck, UserX, CircleDot, Swords } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const CHALLENGE_FEES = [0, 1, 2, 5, 10];
 
 interface FriendRequest {
   id: string;
@@ -35,10 +39,39 @@ export default function FriendRequests({
   const [processing, setProcessing] = useState<string | null>(null);
   const [friendUsername, setFriendUsername] = useState("");
   const [addingFriend, setAddingFriend] = useState(false);
+  const [challengeFor, setChallengeFor] = useState<string | null>(null);
+  const [challengeMode, setChallengeMode] = useState<"CLASSIC" | "RUSH">(
+    "CLASSIC"
+  );
+  const [inviting, setInviting] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  const sendChallenge = async (toUserId: string, entryFee: number) => {
+    if (inviting) return;
+    setInviting(true);
+    try {
+      const res = await fetch("/api/game/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toUserId, entryFee, gameMode: challengeMode }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Could not send invite");
+        return;
+      }
+      setChallengeFor(null);
+      router.push(`/game/${data.gameId}`);
+    } catch {
+      alert("Could not send invite");
+    } finally {
+      setInviting(false);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -338,6 +371,11 @@ export default function FriendRequests({
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
                     <button
+                      onClick={() =>
+                        setChallengeFor(
+                          challengeFor === friend.id ? null : friend.id
+                        )
+                      }
                       className="px-4 py-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-lg transition-colors flex items-center gap-2 min-h-[44px]"
                       aria-label="Challenge to game"
                     >
@@ -354,6 +392,42 @@ export default function FriendRequests({
                     </button>
                   </div>
                 </div>
+
+                {challengeFor === friend.id && (
+                  <div className="mt-3 rounded-lg border border-white/10 bg-black/30 p-3">
+                    <div className="mb-2 flex gap-2">
+                      {(["CLASSIC", "RUSH"] as const).map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => setChallengeMode(m)}
+                          className={cn(
+                            "flex-1 rounded-md py-1.5 text-xs font-semibold",
+                            challengeMode === m
+                              ? "bg-primary text-white"
+                              : "bg-white/5 text-white/60"
+                          )}
+                        >
+                          {m === "CLASSIC" ? "Classic" : "Rush"}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-xs text-white/50 mb-2">
+                      Pick an entry fee (winner takes the pot):
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {CHALLENGE_FEES.map((fee) => (
+                        <button
+                          key={fee}
+                          disabled={inviting}
+                          onClick={() => sendChallenge(friend.id, fee)}
+                          className="rounded-md bg-emerald-600/20 px-3 py-1.5 text-xs font-bold text-emerald-300 hover:bg-emerald-600/30 disabled:opacity-50"
+                        >
+                          {fee === 0 ? "Free" : `${fee} USDT`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

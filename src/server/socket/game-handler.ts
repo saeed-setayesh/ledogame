@@ -5,6 +5,7 @@ import {
   updateGameState,
   loadGameFromDatabase,
   createGameState,
+  rebuildGameStateFromDb,
 } from "@/lib/game/game-state";
 import type { LudoGameState } from "@/lib/game/ludo-engine";
 import { prisma } from "@/lib/prisma";
@@ -147,8 +148,26 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
         forfeitTimers.delete(gameId);
       }
 
-      // Load game state if not in memory
+      // Load game state if not in memory.
       let gameState = getGameState(gameId);
+
+      // The HTTP layer (matchmaking / invite accept) starts games in a separate
+      // module instance, so our cached copy can be a stale WAITING lobby. If the
+      // DB says the game moved on, rebuild from the DB roster.
+      const dbPlayerCount = await prisma.gamePlayer.count({ where: { gameId } });
+      const stale =
+        !!gameState &&
+        ((gamePlayer.game.status === "ACTIVE" &&
+          gameState.gameStatus !== "ACTIVE") ||
+          (gamePlayer.game.status !== "FINISHED" &&
+            gameState.players.length !== dbPlayerCount));
+      if (stale) {
+        console.log(
+          `[Game ${gameId}] cached state stale (mem ${gameState!.gameStatus}/${gameState!.players.length} vs db ${gamePlayer.game.status}/${dbPlayerCount}) — rebuilding`
+        );
+        gameState = await rebuildGameStateFromDb(gameId);
+      }
+
       if (!gameState) {
         gameState = await loadGameFromDatabase(gameId);
 
@@ -277,6 +296,8 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
               !AIPlayer.isAIPlayer(s.data?.userId as string) &&
               s.id !== socket.id
           );
+          // Debounced so a StrictMode remount / refresh doesn't cancel a lobby
+          // or forfeit a live game the player is actually still in.
           if (!someoneElseHere) clearTurnTimer(gameId);
           maybeFinishOnForfeit(gameId, io);
         }
@@ -1003,7 +1024,7 @@ async function resolveForfeit(gameId: string, io: SocketIOServer) {
     where: { id: gameId },
     include: { players: true },
   });
-  if (!game || game.status !== "ACTIVE") return;
+  if (!game || (game.status !== "ACTIVE" && game.status !== "WAITING")) return;
 
   const humans = game.players.filter((p) => !AIPlayer.isAIPlayer(p.userId));
 
@@ -1014,6 +1035,25 @@ async function resolveForfeit(gameId: string, io: SocketIOServer) {
     roomSockets.map((s) => s.data?.userId as string | undefined).filter(Boolean)
   );
   if (humans.some((p) => connectedUserIds.has(p.userId))) return;
+
+  // A lobby that never started and now has nobody in it → cancel it so it
+  // doesn't linger in matchmaking or as a stale invite.
+  if (game.status === "WAITING") {
+    await prisma.game
+      .update({
+        where: { id: gameId },
+        data: { status: "CANCELLED", finishedAt: new Date() },
+      })
+      .catch(() => {});
+    await prisma.gameInvite
+      .updateMany({
+        where: { gameId, status: "PENDING" },
+        data: { status: "EXPIRED" },
+      })
+      .catch(() => {});
+    io.to(`game:${gameId}`).emit("game:cancelled", { gameId });
+    return;
+  }
 
   const activeHumans = humans.filter(
     (p) => p.status === "ACTIVE" || p.status === "FINISHED"

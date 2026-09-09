@@ -95,6 +95,7 @@ model Game {
   players      GamePlayer[]
   moves        GameMove[]
   transactions Transaction[]
+  invites      GameInvite[]
 
   @@index([roomId])
   @@index([status])
@@ -191,12 +192,14 @@ model GameInvite {
   status     InviteStatus @default(PENDING)
   entryFee   Decimal?     @db.Decimal(18, 6)
   gameType   GameType?
+  gameMode   GameMode     @default(CLASSIC)
   maxPlayers Int?
   createdAt  DateTime     @default(now())
   expiresAt  DateTime?
 
-  sender   User @relation("InviteSender", fields: [senderId], references: [id], onDelete: Cascade)
-  receiver User @relation("InviteReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  sender   User  @relation("InviteSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User  @relation("InviteReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  game     Game? @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
   @@index([senderId])
   @@index([receiverId])

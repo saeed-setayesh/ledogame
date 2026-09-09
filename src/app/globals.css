@@ -311,6 +311,11 @@ button:focus-visible,
   50% { transform: scale(1.2); }
   100% { transform: scale(1); }
 }
+@keyframes diePop {
+  0% { transform: scale(0.4); opacity: 0.3; }
+  60% { transform: scale(1.25); opacity: 1; }
+  100% { transform: scale(1); }
+}
 
 .animate-pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
 .animate-shimmer {

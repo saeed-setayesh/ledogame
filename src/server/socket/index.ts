@@ -20,9 +20,21 @@ export function initializeSocket(server: HTTPServer) {
     path: "/api/socket",
   })
 
-  // Keep the per-game turn timer armed whenever game state changes.
+  // Track last broadcast status so we can push a fresh state to everyone in the
+  // room the moment a game flips WAITING -> ACTIVE (matchmaking / invites).
+  const lastStatus = new Map<string, string>()
+
   setStateChangeListener((gameId, state) => {
     scheduleTurnTimer(gameId, io!, state)
+
+    const prev = lastStatus.get(gameId)
+    lastStatus.set(gameId, state.gameStatus)
+    if (prev !== state.gameStatus) {
+      io!.to(`game:${gameId}`).emit("game:state", { gameState: state })
+      if (state.gameStatus === "ACTIVE" && prev === "WAITING") {
+        io!.to(`game:${gameId}`).emit("game:started", { gameId })
+      }
+    }
   })
 
   io.on("connection", (socket) => {

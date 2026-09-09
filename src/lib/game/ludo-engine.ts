@@ -403,9 +403,8 @@ export class LudoEngine {
   }
 
   private checkWin(player: Player): boolean {
-    if (this.state.gameMode === "RUSH") {
-      return player.pieces.some((piece) => piece.isFinished);
-    }
+    // Both modes: you win only once ALL four pieces are home. RUSH just plays
+    // the turns in parallel (per-player timers) instead of strictly round-robin.
     return player.pieces.every((piece) => piece.isFinished);
   }
 

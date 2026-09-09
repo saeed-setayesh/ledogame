@@ -274,9 +274,10 @@ function PlayerCard({
     >
       {showDie && (
         <div
+          key={dieValue ?? "roll"}
           className={cn(
-            "absolute left-[2.6rem] top-[2.6rem] z-20 flex h-6 w-6 items-center justify-center rounded-md border-2 bg-white text-[11px] font-serif font-bold leading-none text-[#2b2b2b] shadow-[0_1px_4px_rgba(0,0,0,0.55)]",
-            dieRolling && "animate-pulse"
+            "absolute left-[2.5rem] top-[2.4rem] z-20 flex h-7 w-7 items-center justify-center rounded-md border-2 bg-white text-[15px] font-serif font-extrabold leading-none text-[#2b2b2b] shadow-[0_2px_6px_rgba(0,0,0,0.6)]",
+            dieRolling ? "animate-pulse" : "animate-[diePop_0.3s_ease-out]"
           )}
           style={{ borderColor: COLOR_MAP[player.color] }}
           title={`${username}'s die`}
@@ -484,6 +485,20 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
     []
   );
 
+  const isWaitingForOpponent =
+    !gameState || gameState.gameStatus === "WAITING";
+
+  // While waiting for an opponent, re-poll for the live state (the socket
+  // "game:started" push is best-effort; this is the reliable fallback).
+  useEffect(() => {
+    if (!isWaitingForOpponent) return;
+    const socket = getSocket();
+    const id = setInterval(() => {
+      socket.emit("game:join", { gameId: game.id, userId: currentUserId });
+    }, 2500);
+    return () => clearInterval(id);
+  }, [isWaitingForOpponent, game.id, currentUserId]);
+
   const turnActive = gameState?.gameStatus === "ACTIVE";
   const secondsLeft = useSecondsLeft(
     turnActive ? gameState?.turnEndsAt ?? null : null
@@ -552,6 +567,16 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
       }
     });
 
+    socket.on("game:started", () => {
+      // Re-sync so a player who was on the "waiting" screen gets the live board.
+      joinGame();
+    });
+
+    socket.on("game:cancelled", () => {
+      setErrorToast("The game was cancelled.");
+      window.setTimeout(() => router.push("/lobby"), 1500);
+    });
+
     socket.on("game:finished", (info: FinishInfo) => {
       setFinishInfo(info);
     });
@@ -576,10 +601,12 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
       socket.off("game:state");
       socket.off("game:dice-rolled");
       socket.off("game:piece-moved");
+      socket.off("game:started");
+      socket.off("game:cancelled");
       socket.off("game:finished");
       socket.off("game:error");
     };
-  }, [game.id, currentUserId]);
+  }, [game.id, currentUserId, router]);
 
   const handleRollDice = () => {
     if (!gameState) return;
@@ -632,17 +659,28 @@ export default function GamePage({ game, currentUserId }: GamePageProps) {
     return `${n} × ${fee} → Pot ${pot} USDT`;
   }, [game.entryFee, game.totalPot, gameState?.players.length]);
 
-  if (!gameState) {
+  if (isWaitingForOpponent) {
+    const isWaiting = !gameState || gameState.gameStatus === "WAITING";
     return (
-      <div className="game-shell-bg min-h-dvh flex items-center justify-center">
-        <div className="text-center text-white/90">
-          <div className="text-xl mb-4">Loading game...</div>
-          {game.status === "WAITING" && (
-            <div className="text-sm opacity-70">
-              Waiting for more players to join...
-            </div>
-          )}
+      <div className="game-shell-bg min-h-dvh flex flex-col items-center justify-center gap-5 px-6 text-center text-white/90">
+        <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/15 border-t-white/70" />
+        <div className="text-xl font-semibold">
+          {isWaiting ? "Waiting for an opponent…" : "Loading game…"}
         </div>
+        {game.entryFee && Number(game.entryFee) > 0 && (
+          <div className="text-sm text-white/60">
+            Entry fee {Number(game.entryFee)} USDT · winner takes the pot
+          </div>
+        )}
+        {isWaiting && (
+          <button
+            type="button"
+            onClick={handleExitGame}
+            className="mt-2 rounded-xl border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-semibold hover:bg-white/10"
+          >
+            Cancel &amp; leave
+          </button>
+        )}
       </div>
     );
   }

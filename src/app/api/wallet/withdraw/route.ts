@@ -19,10 +19,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, txHash })
   } catch (error: any) {
     console.error("Withdrawal error:", error)
-    return NextResponse.json(
-      { error: error.message || "Withdrawal failed" },
-      { status: 500 }
-    )
+    const msg = error?.message || "Withdrawal failed"
+    // Validation / balance problems are the caller's fault → 400, not 500.
+    const isUserError =
+      /invalid|insufficient|address|amount|balance|minimum|maximum/i.test(msg)
+    return NextResponse.json({ error: msg }, { status: isUserError ? 400 : 500 })
   }
 }
 

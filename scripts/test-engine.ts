@@ -96,6 +96,33 @@ console.log("CLASSIC: reaching final home square grants a bonus roll");
   check("game not over (other pieces remain)", finished === false);
 }
 
+console.log("RUSH: one piece home does NOT win — need all four");
+{
+  const e = newGame("RUSH");
+  const st = e.getState();
+  // 3 of RED's pieces already home, one near the finish.
+  st.players[0].pieces[0] = { id: 0, position: 100, color: "RED", isHome: false, isFinished: true };
+  st.players[0].pieces[1] = { id: 1, position: 101, color: "RED", isHome: false, isFinished: true };
+  st.players[0].pieces[2] = { id: 2, position: 102, color: "RED", isHome: false, isFinished: true };
+  st.players[0].pieces[3] = { id: 3, position: 53, color: "RED", isHome: false, isFinished: false };
+  e.setState(st);
+  withDice(3, () => e.rollDice("p0"));
+  const finishedNotAll = withDiceReturn(3, () => e.movePiece("p0", 3));
+  // wait — that WOULD finish the 4th. Let's instead only move it partway.
+  const e2 = newGame("RUSH");
+  const s2 = e2.getState();
+  s2.players[0].pieces[0] = { id: 0, position: 100, color: "RED", isHome: false, isFinished: true };
+  s2.players[0].pieces[1] = { id: 1, position: 20, color: "RED", isHome: false, isFinished: false };
+  s2.players[0].pieces[2] = { id: 2, position: -1, color: "RED", isHome: true, isFinished: false };
+  s2.players[0].pieces[3] = { id: 3, position: -1, color: "RED", isHome: true, isFinished: false };
+  e2.setState(s2);
+  withDice(3, () => e2.rollDice("p0"));
+  const notWon = withDiceReturn(3, () => e2.movePiece("p0", 1));
+  check("1 of 4 finished → not a win", notWon === false);
+  check("all 4 finished → win", finishedNotAll === true);
+  check("winner set only on all-four", e.getState().gameStatus === "FINISHED");
+}
+
 console.log("Turn-timer auto-advance plays or skips the turn");
 {
   const e = newGame();

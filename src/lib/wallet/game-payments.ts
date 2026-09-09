@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { Decimal } from "@prisma/client/runtime/library";
 import { AIPlayer } from "@/lib/game/ai-player";
+import { rebuildGameStateFromDb } from "@/lib/game/game-state";
 import {
   deductEntryFeeInTx,
   entryFeeAlreadyCharged,
@@ -51,6 +52,7 @@ export async function collectEntryFeesAndStartGame(gameId: string): Promise<{
           totalPot: new Decimal(0),
         },
       });
+      await rebuildGameStateFromDb(gameId);
     }
     return { started: true, totalPot: 0 };
   }
@@ -120,6 +122,9 @@ export async function collectEntryFeesAndStartGame(gameId: string): Promise<{
     });
     return pot;
   });
+
+  // Engine was created with only the creator; rebuild it with everyone now.
+  await rebuildGameStateFromDb(gameId);
 
   return { started: true, totalPot };
 }

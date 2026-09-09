@@ -32,6 +32,8 @@ export default function Lobby({ userId }: LobbyProps) {
   const [showPracticeModal, setShowPracticeModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [entryFees, setEntryFees] = useState([1, 2, 3, 5, 10]);
+  const [searching, setSearching] = useState(false);
+  const [matchError, setMatchError] = useState<string | null>(null);
 
   const maxPlayerChoices = useMemo(
     () => Array.from({ length: 11 }, (_, i) => i + 2),
@@ -70,6 +72,56 @@ export default function Lobby({ userId }: LobbyProps) {
         // Use defaults if fetch fails
       });
   }, []);
+
+  // ---- Quick Match (random 2-player matchmaking) ----
+  useEffect(() => {
+    if (!searching) return;
+    let stopped = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/game/matchmake", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entryFee, gameMode }),
+        });
+        const data = await res.json();
+        if (stopped) return;
+        if (!res.ok) {
+          setMatchError(data.error || "Matchmaking failed");
+          setSearching(false);
+          return;
+        }
+        if (data.status === "matched" && data.gameId) {
+          stopped = true;
+          router.push(`/game/${data.gameId}`);
+        }
+      } catch {
+        /* keep polling */
+      }
+    };
+
+    void poll();
+    const id = setInterval(poll, 3000);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [searching, entryFee, gameMode, router]);
+
+  const startQuickMatch = () => {
+    setMatchError(null);
+    setSearching(true);
+  };
+
+  const stopQuickMatch = () => {
+    setSearching(false);
+    fetch("/api/game/matchmake", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cancel: true }),
+    }).catch(() => {});
+  };
 
   const handleCreateGame = async () => {
     setLoading(true);
@@ -122,6 +174,45 @@ export default function Lobby({ userId }: LobbyProps) {
           <div className="game-divider mt-4 opacity-40" />
         </div>
 
+        {/* Quick Match — random 2-player game at the selected mode + fee */}
+        <div className="game-card">
+          <div className="flex items-center gap-2 mb-3">
+            <Users className="w-5 h-5 text-primary" />
+            <label className="block text-lg font-semibold">Quick Match</label>
+          </div>
+          {!searching ? (
+            <>
+              <p className="text-xs text-foreground/60 mb-3">
+                Get matched with a random opponent — {gameMode === "RUSH" ? "Rush" : "Classic"},{" "}
+                {entryFee} USDT entry. Adjust the mode &amp; fee below first.
+              </p>
+              <button
+                onClick={startQuickMatch}
+                className="w-full py-4 rounded-xl font-bold text-white bg-gradient-to-r from-primary via-secondary to-accent hover:scale-[1.01] transition-all shadow-lg min-h-[44px] flex items-center justify-center gap-2"
+              >
+                <Play className="w-5 h-5" />
+                Find Opponent ({entryFee} USDT)
+              </button>
+            </>
+          ) : (
+            <div className="flex flex-col items-center gap-3 py-2">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+              <div className="text-sm text-white/80">
+                Searching for an opponent… ({gameMode === "RUSH" ? "Rush" : "Classic"} · {entryFee} USDT)
+              </div>
+              <button
+                onClick={stopQuickMatch}
+                className="text-xs px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"
+              >
+                Stop searching
+              </button>
+            </div>
+          )}
+          {matchError && (
+            <p className="text-xs text-danger mt-2">{matchError}</p>
+          )}
+        </div>
+
         {/* Game Mode: Classic vs Rush */}
         <div className="game-card">
           <div className="flex items-center gap-2 mb-4">
@@ -161,7 +252,7 @@ export default function Lobby({ userId }: LobbyProps) {
               }
             >
               <div className="font-bold mb-1">Rush</div>
-              <div className="text-xs opacity-60">Parallel play — roll & move on your timer. First piece home wins!</div>
+              <div className="text-xs opacity-60">All 4 pieces home wins — but everyone rolls & moves in parallel on their own timer.</div>
             </button>
           </div>
         </div>

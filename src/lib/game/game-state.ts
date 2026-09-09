@@ -59,7 +59,19 @@ export async function createGameState(
     })),
     gameMode
   );
-  const state = stampTurnDeadline(engine.getState());
+
+  // The engine always starts games as ACTIVE; honour the DB status so a game
+  // that is still WAITING for opponents doesn't render as a live board.
+  const dbGame = await prisma.game.findUnique({
+    where: { id: gameId },
+    select: { status: true },
+  });
+  let raw = engine.getState();
+  if (dbGame?.status === "WAITING" || dbGame?.status === "FINISHED") {
+    raw = { ...raw, gameStatus: dbGame.status };
+  }
+  const state = stampTurnDeadline(raw);
+  engine.setState(state);
 
   activeGames.set(gameId, { engine, state });
 
@@ -133,9 +145,17 @@ export async function loadGameFromDatabase(
   const modeFromDb: GameModeType =
     game.gameMode === "RUSH" ? "RUSH" : "CLASSIC";
 
+  const dbStatus: LudoGameState["gameStatus"] =
+    game.status === "FINISHED"
+      ? "FINISHED"
+      : game.status === "ACTIVE"
+        ? "ACTIVE"
+        : "WAITING";
+
   if (game.gameState) {
     const raw = { ...(game.gameState as object) } as Record<string, unknown>;
     if (!raw.gameMode) raw.gameMode = modeFromDb;
+    raw.gameStatus = dbStatus;
     const normalized = normalizeGameState(raw);
     if (normalized.players.length === players.length) {
       const engine = new LudoEngine(players, normalized.gameMode);
@@ -148,7 +168,8 @@ export async function loadGameFromDatabase(
   }
 
   const engine = new LudoEngine(players, modeFromDb);
-  const state = stampTurnDeadline(engine.getState());
+  const state = stampTurnDeadline({ ...engine.getState(), gameStatus: dbStatus });
+  engine.setState(state);
   activeGames.set(gameId, { engine, state });
 
   notifyStateChange(gameId, state);
@@ -157,4 +178,32 @@ export async function loadGameFromDatabase(
 
 export function removeGame(gameId: string) {
   activeGames.delete(gameId);
+}
+
+/**
+ * Force the in-memory engine to match the current DB roster. Used when a game
+ * transitions WAITING -> ACTIVE after players joined (matchmaking / invites),
+ * since the engine created at game-creation time only had the creator.
+ */
+export async function rebuildGameStateFromDb(
+  gameId: string
+): Promise<LudoGameState | null> {
+  const game = await prisma.game.findUnique({
+    where: { id: gameId },
+    include: { players: { orderBy: { position: "asc" } } },
+  });
+  if (!game || game.players.length === 0) return null;
+
+  const mode: GameModeType = game.gameMode === "RUSH" ? "RUSH" : "CLASSIC";
+  return createGameState(
+    gameId,
+    game.players.map((p, idx) => ({
+      id: p.id,
+      userId: p.userId,
+      // Re-normalise seat order so currentTurn indexing is stable.
+      position: idx,
+      color: p.color as string,
+    })),
+    mode
+  );
 }
