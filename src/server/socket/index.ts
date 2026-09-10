@@ -83,7 +83,7 @@ export function initializeSocket(server: HTTPServer) {
     } finally {
       pairing = false
     }
-  }, 2000)
+  }, 1500)
 
   return io
 }

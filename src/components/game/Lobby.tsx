@@ -36,6 +36,8 @@ export default function Lobby({ userId }: LobbyProps) {
   const [searching, setSearching] = useState(false);
   const [matchError, setMatchError] = useState<string | null>(null);
   const [searchSecs, setSearchSecs] = useState(0);
+  const [searchInfo, setSearchInfo] = useState<{ players: number; needed: number } | null>(null);
+  const [qmPlayers, setQmPlayers] = useState<2 | 3 | 4>(2);
   const navigatedRef = useRef(false);
 
   const maxPlayerChoices = useMemo(
@@ -76,11 +78,12 @@ export default function Lobby({ userId }: LobbyProps) {
       });
   }, []);
 
-  // ---- Quick Match (random 2-player matchmaking) ----
+  // ---- Quick Match (random 2–4 player matchmaking) ----
   useEffect(() => {
     if (!searching) return;
     let stopped = false;
     navigatedRef.current = false;
+    setSearchInfo(null);
 
     const go = (gameId: string) => {
       if (stopped || navigatedRef.current) return;
@@ -103,7 +106,7 @@ export default function Lobby({ userId }: LobbyProps) {
         const res = await fetch("/api/game/matchmake", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entryFee, gameMode }),
+          body: JSON.stringify({ entryFee, gameMode, maxPlayers: qmPlayers }),
         });
         const data = await res.json();
         if (stopped) return;
@@ -113,6 +116,9 @@ export default function Lobby({ userId }: LobbyProps) {
           return;
         }
         if (data.status === "matched" && data.gameId) go(data.gameId);
+        else if (data.status === "searching") {
+          setSearchInfo({ players: data.players ?? 1, needed: data.needed ?? qmPlayers });
+        }
       } catch {
         /* keep polling */
       }
@@ -130,7 +136,7 @@ export default function Lobby({ userId }: LobbyProps) {
       socket.off("connect", subscribe);
       socket.emit("match:unsubscribe", { userId });
     };
-  }, [searching, entryFee, gameMode, router, userId]);
+  }, [searching, entryFee, gameMode, qmPlayers, router, userId]);
 
   const startQuickMatch = () => {
     setMatchError(null);
@@ -207,28 +213,55 @@ export default function Lobby({ userId }: LobbyProps) {
           {!searching ? (
             <>
               <p className="text-xs text-foreground/60 mb-3">
-                Get matched with a random opponent — {gameMode === "RUSH" ? "Rush" : "Classic"},{" "}
+                Get matched with real opponents — {gameMode === "RUSH" ? "Rush" : "Classic"},{" "}
                 {entryFee} USDT entry. Adjust the mode &amp; fee below first.
               </p>
+              <div className="mb-3">
+                <div className="text-xs text-foreground/60 mb-1.5">Players</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {([2, 3, 4] as const).map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => setQmPlayers(n)}
+                      className={cn(
+                        "rounded-lg border-2 py-2 text-sm font-bold transition-all min-h-[40px]",
+                        qmPlayers === n
+                          ? "border-primary bg-primary/15 text-white"
+                          : "border-border bg-background text-foreground/60"
+                      )}
+                    >
+                      {n} players
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button
                 onClick={startQuickMatch}
                 className="w-full py-4 rounded-xl font-bold text-white bg-gradient-to-r from-primary via-secondary to-accent hover:scale-[1.01] transition-all shadow-lg min-h-[44px] flex items-center justify-center gap-2"
               >
                 <Play className="w-5 h-5" />
-                Find Opponent ({entryFee} USDT)
+                Find {qmPlayers === 2 ? "Opponent" : "Opponents"} ({entryFee} USDT)
               </button>
             </>
           ) : (
             <div className="flex flex-col items-center gap-3 py-2">
               <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
               <div className="text-sm text-white/80">
-                Searching for an opponent… ({gameMode === "RUSH" ? "Rush" : "Classic"} · {entryFee} USDT)
+                Searching for {qmPlayers === 2 ? "an opponent" : "opponents"}… (
+                {gameMode === "RUSH" ? "Rush" : "Classic"} · {entryFee} USDT)
               </div>
-              <div className="text-xs text-white/40">{searchSecs}s</div>
+              <div className="text-xs text-white/60">
+                {searchInfo
+                  ? `${searchInfo.players}/${searchInfo.needed} players · ${searchSecs}s`
+                  : `${searchSecs}s`}
+              </div>
               {searchSecs >= 30 && (
                 <div className="text-xs text-white/50 text-center max-w-[16rem]">
-                  Still looking. Nobody else is on this mode &amp; fee right now —
-                  try a different entry fee, or invite a friend.
+                  Still looking for real players on {gameMode === "RUSH" ? "Rush" : "Classic"} at{" "}
+                  {entryFee} USDT.{" "}
+                  {qmPlayers > 2
+                    ? "It'll start with whoever's here once there are at least 2."
+                    : "Try a different entry fee, or invite a friend."}
                 </div>
               )}
               <button

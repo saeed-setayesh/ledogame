@@ -3,10 +3,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSocket } from "../socket/client";
 
-const ICE_SERVERS: RTCIceServer[] = [
+// Baseline (STUN only). The real list — including a TURN relay for phones on
+// different networks — is fetched once from /api/webrtc/ice.
+const FALLBACK_ICE: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
+let cachedIce: RTCIceServer[] | null = null;
+let icePromise: Promise<RTCIceServer[]> | null = null;
+
+let iceHasTurn = false;
+
+async function loadIceServers(): Promise<RTCIceServer[]> {
+  if (cachedIce) return cachedIce;
+  if (!icePromise) {
+    icePromise = fetch("/api/webrtc/ice")
+      .then((r) => r.json())
+      .then((d): RTCIceServer[] => {
+        const list: RTCIceServer[] =
+          Array.isArray(d?.iceServers) && d.iceServers.length
+            ? d.iceServers
+            : FALLBACK_ICE;
+        iceHasTurn = !!d?.hasTurn;
+        cachedIce = list;
+        return list;
+      })
+      .catch((): RTCIceServer[] => FALLBACK_ICE);
+  }
+  return icePromise;
+}
 
 export type PeerConnState =
   | "new"
@@ -152,7 +177,9 @@ export function usePeerMesh(
       const existing = peersRef.current.get(peerUserId);
       if (existing) return existing;
 
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const pc = new RTCPeerConnection({
+        iceServers: cachedIce ?? FALLBACK_ICE,
+      });
       const initiator = myUserId < peerUserId;
       const rec: PeerRecord = {
         pc,
@@ -347,6 +374,34 @@ export function usePeerMesh(
       },
     };
   });
+
+  // Preload the ICE list. If a TURN relay is configured, push it onto any peer
+  // that hasn't connected yet and retry ICE (STUN-only stays untouched so a
+  // working same-network call isn't disturbed).
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void loadIceServers().then((servers) => {
+      if (cancelled || !iceHasTurn) return;
+      for (const [, rec] of peersRef.current) {
+        try {
+          rec.pc.setConfiguration({ iceServers: servers });
+          if (
+            rec.initiator &&
+            rec.pc.connectionState !== "connected" &&
+            rec.pc.signalingState === "stable"
+          ) {
+            rec.pc.restartIce();
+          }
+        } catch {
+          /* setConfiguration unsupported / pc closed */
+        }
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
 
   // Socket wiring + presence.
   useEffect(() => {

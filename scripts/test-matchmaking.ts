@@ -95,42 +95,75 @@ async function main() {
   });
   await api(A, "/api/game/matchmake", { cancel: true });
   await api(B, "/api/game/matchmake", { cancel: true });
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const finishAll = () =>
+    prisma.game.updateMany({
+      where: {
+        players: { some: { userId: { in: ids } } },
+        status: { in: ["WAITING", "ACTIVE"] },
+      },
+      data: { status: "FINISHED", finishedAt: new Date() },
+    });
 
-  console.log("Matchmaking: two users, same bucket, get paired");
+  console.log("Matchmaking: two users, same bucket, get paired by the server");
   const a1 = await api(A, "/api/game/matchmake", { entryFee: 1, gameMode: "CLASSIC" });
-  check("A starts searching", a1.json.status === "searching" && !!a1.json.gameId);
-
   const b1 = await api(B, "/api/game/matchmake", { entryFee: 1, gameMode: "CLASSIC" });
-  check("B is matched immediately", b1.json.status === "matched" && !!b1.json.gameId);
-  check("B joined A's lobby (same gameId)", b1.json.gameId === a1.json.gameId);
+  check("A searching", a1.json.status === "searching");
+  check("B searching", b1.json.status === "searching");
 
+  // Server-side pairer runs every ~1.5s.
+  await sleep(4000);
   const a2 = await api(A, "/api/game/matchmake", { entryFee: 1, gameMode: "CLASSIC" });
-  check("A's next poll returns matched", a2.json.status === "matched");
-  check("A + B same game", a2.json.gameId === b1.json.gameId);
+  const b2 = await api(B, "/api/game/matchmake", { entryFee: 1, gameMode: "CLASSIC" });
+  check("A matched", a2.json.status === "matched" && !!a2.json.gameId);
+  check("B matched", b2.json.status === "matched" && !!b2.json.gameId);
+  check("A + B in the SAME game", a2.json.gameId === b2.json.gameId);
 
-  // The game should be ACTIVE with 2 players and fees collected
   const gs = await gameStatus(a2.json.gameId);
   check("game is ACTIVE", gs?.status === "ACTIVE");
   check("2 players, pot = 2× fee", gs?.players === 2 && gs?.pot === 2);
 
-  console.log("\nDifferent buckets don't cross-match");
-  // Finish any live game so matchmake doesn't just resume it.
-  await prisma.game.updateMany({
-    where: {
-      players: { some: { userId: { in: ids } } },
-      status: { in: ["WAITING", "ACTIVE"] },
+  console.log("\nA stuck practice game (has a bot) is NEVER resumed by Quick Match");
+  await finishAll();
+  await api(A, "/api/game/matchmake", { cancel: true });
+  // fake a lingering ACTIVE practice game: A + an AI, SOLO/2p, non-QM roomId
+  const practice = await prisma.game.create({
+    data: {
+      roomId: "practice" + Date.now(),
+      gameType: "SOLO",
+      gameMode: "CLASSIC",
+      maxPlayers: 2,
+      entryFee: 0,
+      creatorId: ids[0],
+      status: "ACTIVE",
+      startedAt: new Date(),
+      players: {
+        create: [
+          { userId: ids[0], position: 0, color: "RED", status: "ACTIVE" },
+          { userId: "AI_0", position: 1, color: "BLUE", status: "ACTIVE" },
+        ],
+      },
     },
-    data: { status: "FINISHED", finishedAt: new Date() },
   });
+  const aStuck = await api(A, "/api/game/matchmake", { entryFee: 1, gameMode: "CLASSIC" });
+  check("Quick Match ignores the bot game (status searching)", aStuck.json.status === "searching");
+  check("…and points at a NEW game, not the practice one", aStuck.json.gameId !== practice.id);
+  await prisma.game.update({ where: { id: practice.id }, data: { status: "FINISHED" } });
+
+  console.log("\nDifferent buckets don't cross-match");
+  await finishAll();
   await api(A, "/api/game/matchmake", { cancel: true });
   await api(B, "/api/game/matchmake", { cancel: true });
   const a3 = await api(A, "/api/game/matchmake", { entryFee: 2, gameMode: "CLASSIC" });
   const b3 = await api(B, "/api/game/matchmake", { entryFee: 5, gameMode: "CLASSIC" });
   check("A searching (fee 2)", a3.json.status === "searching");
-  check("B searching (fee 5), not matched to A", b3.json.status === "searching");
-  check("different lobbies", a3.json.gameId !== b3.json.gameId);
+  check("B searching (fee 5)", b3.json.status === "searching");
+  await sleep(4000);
+  const a3b = await api(A, "/api/game/matchmake", { entryFee: 2, gameMode: "CLASSIC" });
+  check("A still searching — no cross-bucket match", a3b.json.status === "searching");
   await api(A, "/api/game/matchmake", { cancel: true });
   await api(B, "/api/game/matchmake", { cancel: true });
+  await finishAll();
 
   console.log("\nFriend invite flow");
   // ensure friendship

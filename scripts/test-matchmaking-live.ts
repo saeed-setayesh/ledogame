@@ -65,14 +65,19 @@ async function quickMatch(
   cookie: string,
   fee: number,
   mode: string,
-  maxMs = 30000
+  seats = 2,
+  maxMs = 45000
 ): Promise<string | null> {
   const start = Date.now();
   while (Date.now() - start < maxMs) {
-    const { ok, json } = await mm(cookie, { entryFee: fee, gameMode: mode });
+    const { ok, json } = await mm(cookie, {
+      entryFee: fee,
+      gameMode: mode,
+      maxPlayers: seats,
+    });
     if (!ok) return null;
     if (json.status === "matched" && json.gameId) return json.gameId;
-    await sleep(3000);
+    await sleep(2000);
   }
   return null;
 }
@@ -129,16 +134,16 @@ async function main() {
     data: { status: "CANCELLED", finishedAt: new Date() },
   });
 
-  for (let round = 1; round <= 3; round++) {
-    console.log(`\n--- Round ${round}: simultaneous Find Opponent (1 USDT) ---`);
+  for (let round = 1; round <= 2; round++) {
+    console.log(`\n--- Round ${round}: simultaneous Find Opponent (2p, 1 USDT) ---`);
     await mm(A.cookie, { cancel: true });
     await mm(B.cookie, { cancel: true });
     await sleep(200);
 
     // Both press the button at the same instant.
     const [gA, gB] = await Promise.all([
-      quickMatch(A.cookie, 1, "CLASSIC"),
-      quickMatch(B.cookie, 1, "CLASSIC"),
+      quickMatch(A.cookie, 1, "CLASSIC", 2),
+      quickMatch(B.cookie, 1, "CLASSIC", 2),
     ]);
     check(`A got a game (${gA})`, !!gA);
     check(`B got a game (${gB})`, !!gB);
@@ -157,6 +162,31 @@ async function main() {
         data: { status: "FINISHED", finishedAt: new Date() },
       });
     }
+  }
+
+  console.log("\n--- 3-player Quick Match: A + B + C ---");
+  const C = await login("p3@ledo.game");
+  await prisma.user.update({ where: { id: C.id }, data: { walletBalance: 100 } });
+  await prisma.game.updateMany({
+    where: { players: { some: { userId: C.id } }, status: { in: ["WAITING", "ACTIVE"] } },
+    data: { status: "CANCELLED" },
+  });
+  for (const u of [A, B, C]) await mm(u.cookie, { cancel: true });
+  await sleep(200);
+  const [g3a, g3b, g3c] = await Promise.all([
+    quickMatch(A.cookie, 1, "CLASSIC", 3),
+    quickMatch(B.cookie, 1, "CLASSIC", 3),
+    quickMatch(C.cookie, 1, "CLASSIC", 3),
+  ]);
+  check("all three got a game", !!g3a && !!g3b && !!g3c);
+  check("all three in the SAME game", g3a === g3b && g3b === g3c);
+  if (g3a && g3a === g3c) {
+    const gs = await prisma.game.findUnique({
+      where: { id: g3a },
+      include: { players: true },
+    });
+    check("game ACTIVE with 3 players, pot 3", gs?.status === "ACTIVE" && gs?.players.length === 3 && Number(gs?.totalPot) === 3);
+    await prisma.game.update({ where: { id: g3a }, data: { status: "FINISHED" } });
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

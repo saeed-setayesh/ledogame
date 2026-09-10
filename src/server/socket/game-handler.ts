@@ -238,7 +238,7 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       // A (re)join cancels any pending forfeit for this game.
       const pendingForfeit = forfeitTimers.get(gameId);
       if (pendingForfeit) {
-        clearTimeout(pendingForfeit);
+        clearTimeout(pendingForfeit.timer);
         forfeitTimers.delete(gameId);
       }
 
@@ -1108,7 +1108,10 @@ export async function handleSocketDisconnect(
 
 // Debounce forfeit resolution so a refresh / phone backgrounding / brief
 // network drop doesn't end a game the player is still in.
-const forfeitTimers = new Map<string, NodeJS.Timeout>();
+const forfeitTimers = new Map<
+  string,
+  { timer: NodeJS.Timeout; fireAt: number }
+>();
 // Network drop / tab close: give them time to come back.
 const FORFEIT_GRACE_MS = 25_000;
 // Explicit "leave game" tap (they confirmed a dialog): only guard against a
@@ -1120,15 +1123,19 @@ function maybeFinishOnForfeit(
   io: SocketIOServer,
   graceMs: number = FORFEIT_GRACE_MS
 ) {
+  const fireAt = Date.now() + graceMs;
   const existing = forfeitTimers.get(gameId);
-  if (existing) clearTimeout(existing);
-  forfeitTimers.set(
-    gameId,
-    setTimeout(() => {
+  // Keep the SOONER resolution — a later disconnect must not push back an
+  // explicit "leave" that's already scheduled to resolve quickly.
+  if (existing && existing.fireAt <= fireAt) return;
+  if (existing) clearTimeout(existing.timer);
+  forfeitTimers.set(gameId, {
+    fireAt,
+    timer: setTimeout(() => {
       forfeitTimers.delete(gameId);
       void resolveForfeit(gameId, io);
-    }, graceMs)
-  );
+    }, graceMs),
+  });
 }
 
 /**

@@ -190,6 +190,19 @@ export default function VideoCall({
   const connectedCount = remoteList.filter(
     (p) => p.connState === "connected"
   ).length;
+  const anyConnecting = remoteList.some(
+    (p) => p.connState === "connecting" || p.connState === "new"
+  );
+  const anyFailed = remoteList.some((p) => p.connState === "failed");
+  const iAmSending = !!localStream && (isVideoEnabled || isAudioEnabled);
+
+  let linkNote: string | null = null;
+  if (iAmSending && remoteList.length > 0) {
+    if (connectedCount > 0) linkNote = null;
+    else if (anyFailed)
+      linkNote = "Can't reach the other player — network blocked";
+    else if (anyConnecting) linkNote = "Connecting to the other player…";
+  }
 
   return (
     <div className={cn("flex items-center gap-2", compact && "relative")}>
@@ -283,6 +296,11 @@ export default function VideoCall({
               }
             />
           ))}
+          {linkNote && (
+            <div className="col-span-full text-center text-[9px] font-medium text-amber-300">
+              {linkNote}
+            </div>
+          )}
         </div>
       )}
     </div>
