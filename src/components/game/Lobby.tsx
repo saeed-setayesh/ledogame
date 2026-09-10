@@ -204,7 +204,7 @@ export default function Lobby({ userId }: LobbyProps) {
           <div className="game-divider mt-4 opacity-40" />
         </div>
 
-        {/* Quick Match — random 2-player game at the selected mode + fee */}
+        {/* Quick Match — random 2–4 player game, fully configured here */}
         <div className="game-card">
           <div className="flex items-center gap-2 mb-3">
             <Users className="w-5 h-5 text-primary" />
@@ -213,9 +213,29 @@ export default function Lobby({ userId }: LobbyProps) {
           {!searching ? (
             <>
               <p className="text-xs text-foreground/60 mb-3">
-                Get matched with real opponents — {gameMode === "RUSH" ? "Rush" : "Classic"},{" "}
-                {entryFee} USDT entry. Adjust the mode &amp; fee below first.
+                Get matched with real opponents. Pick everything right here:
               </p>
+
+              <div className="mb-3">
+                <div className="text-xs text-foreground/60 mb-1.5">Mode</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {(["CLASSIC", "RUSH"] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setGameMode(m)}
+                      className={cn(
+                        "rounded-lg border-2 py-2 text-sm font-bold transition-all min-h-[40px]",
+                        gameMode === m
+                          ? "border-primary bg-primary/15 text-white"
+                          : "border-border bg-background text-foreground/60"
+                      )}
+                    >
+                      {m === "CLASSIC" ? "Classic" : "Rush"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="mb-3">
                 <div className="text-xs text-foreground/60 mb-1.5">Players</div>
                 <div className="grid grid-cols-3 gap-2">
@@ -235,12 +255,33 @@ export default function Lobby({ userId }: LobbyProps) {
                   ))}
                 </div>
               </div>
+
+              <div className="mb-4">
+                <div className="text-xs text-foreground/60 mb-1.5">Entry fee</div>
+                <div className="grid grid-cols-5 gap-2">
+                  {entryFees.map((fee) => (
+                    <button
+                      key={fee}
+                      onClick={() => setEntryFee(fee)}
+                      className={cn(
+                        "rounded-lg border-2 py-2 text-sm font-bold transition-all min-h-[40px]",
+                        entryFee === fee
+                          ? "border-primary bg-primary/15 text-white"
+                          : "border-border bg-background text-foreground/60"
+                      )}
+                    >
+                      {fee}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <button
                 onClick={startQuickMatch}
                 className="w-full py-4 rounded-xl font-bold text-white bg-gradient-to-r from-primary via-secondary to-accent hover:scale-[1.01] transition-all shadow-lg min-h-[44px] flex items-center justify-center gap-2"
               >
                 <Play className="w-5 h-5" />
-                Find {qmPlayers === 2 ? "Opponent" : "Opponents"} ({entryFee} USDT)
+                Find {qmPlayers === 2 ? "Opponent" : "Opponents"} — {gameMode === "RUSH" ? "Rush" : "Classic"} · {entryFee} USDT
               </button>
             </>
           ) : (
