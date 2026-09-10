@@ -5,11 +5,14 @@ import type { PlayerColor } from "./ludo-engine";
  *
  * Piece `position` is color-relative progress:
  * - -1: inside the home nest
- * - 0..51: outer loop, starting from that piece color's entry square
- * - 52..56: that color's home lane toward the center
+ * - 0..50: outer loop, starting from that piece color's entry square. A colour
+ *   walks 51 shared-loop cells and then turns into its own home lane — it never
+ *   steps onto loop cell 51 (the square just before its own start).
+ * - 51..55: that colour's 5-cell home lane toward the center
+ * - 56: finished (in the center goal)
  */
-export const OUTER_TRACK_LENGTH = 52;
-export const HOME_LANE_START = 52;
+export const OUTER_TRACK_LENGTH = 52; // physical shared loop size
+export const HOME_LANE_START = 51; // progress value of the first home-lane cell
 export const FINISH_PROGRESS = 56;
 
 const START_OFFSETS: Record<PlayerColor, number> = {
@@ -118,7 +121,8 @@ export function pathPositionToOuterIndex(
   color: PlayerColor,
   position: number
 ): number | null {
-  if (position < 0 || position >= OUTER_TRACK_LENGTH) return null;
+  // Only progress 0..50 is on the shared loop; 51+ is the private home lane.
+  if (position < 0 || position >= HOME_LANE_START) return null;
   return (START_OFFSETS[color] + position) % OUTER_TRACK_LENGTH;
 }
 

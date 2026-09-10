@@ -3,6 +3,7 @@ import { Server as SocketIOServer } from "socket.io"
 import { gameHandlers, scheduleTurnTimer, handleSocketDisconnect } from "./game-handler"
 import { webrtcHandlers, webrtcHandleDisconnect } from "./webrtc-handler"
 import { setStateChangeListener } from "@/lib/game/game-state"
+import { pairWaitingLobbies } from "@/lib/game/matchmaking"
 
 let io: SocketIOServer | null = null
 
@@ -44,12 +45,45 @@ export function initializeSocket(server: HTTPServer) {
     gameHandlers(socket, io!)
     webrtcHandlers(socket, io!)
 
+    // Quick Match: while a client is on the "searching" screen it subscribes
+    // here so the server-side pairer can push it straight into its game.
+    socket.on("match:subscribe", ({ userId }: { userId?: string }) => {
+      if (userId) {
+        socket.data.matchUserId = userId
+        socket.join(`match:${userId}`)
+      }
+    })
+    socket.on("match:unsubscribe", ({ userId }: { userId?: string }) => {
+      if (userId) socket.leave(`match:${userId}`)
+    })
+
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`)
       webrtcHandleDisconnect(socket, io!)
       handleSocketDisconnect(socket, io!)
     })
   })
+
+  // Server-side matchmaking pass: pairs any two waiting lobbies in the same
+  // bucket every couple of seconds, so pairing never depends on a client poll.
+  let pairing = false
+  setInterval(async () => {
+    if (pairing) return
+    pairing = true
+    try {
+      const started = await pairWaitingLobbies()
+      for (const { gameId, userIds } of started) {
+        io!.to(`game:${gameId}`).emit("game:started", { gameId })
+        for (const uid of userIds) {
+          io!.to(`match:${uid}`).emit("match:found", { gameId })
+        }
+      }
+    } catch (err) {
+      console.error("pairWaitingLobbies error:", err)
+    } finally {
+      pairing = false
+    }
+  }, 2000)
 
   return io
 }

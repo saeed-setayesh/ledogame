@@ -49,6 +49,13 @@ export default function VideoCall({
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
 
+  // Auto-dismiss the error banner so it doesn't sit there forever.
+  useEffect(() => {
+    if (!mediaError) return;
+    const t = setTimeout(() => setMediaError(null), 4500);
+    return () => clearTimeout(t);
+  }, [mediaError]);
+
   const remotePeers = usePeerMesh(gameId, userId, localStream, true);
 
   const notifyVideo = useCallback(

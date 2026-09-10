@@ -114,6 +114,14 @@ async function main() {
   check("2 players, pot = 2× fee", gs?.players === 2 && gs?.pot === 2);
 
   console.log("\nDifferent buckets don't cross-match");
+  // Finish any live game so matchmake doesn't just resume it.
+  await prisma.game.updateMany({
+    where: {
+      players: { some: { userId: { in: ids } } },
+      status: { in: ["WAITING", "ACTIVE"] },
+    },
+    data: { status: "FINISHED", finishedAt: new Date() },
+  });
   await api(A, "/api/game/matchmake", { cancel: true });
   await api(B, "/api/game/matchmake", { cancel: true });
   const a3 = await api(A, "/api/game/matchmake", { entryFee: 2, gameMode: "CLASSIC" });

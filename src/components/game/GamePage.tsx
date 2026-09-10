@@ -54,8 +54,8 @@ const COLOR_MAP: Record<PlayerColor, string> = {
   YELLOW: "#f1c40f",
 };
 
-const CLASSIC_TURN_MS = 20_000;
-const RUSH_TURN_MS = 15_000;
+const CLASSIC_TURN_MS = 10_000;
+const RUSH_TURN_MS = 10_000;
 
 interface FinishInfo {
   winnerUserId: string | null;

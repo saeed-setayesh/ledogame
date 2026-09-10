@@ -25,6 +25,96 @@ function clearTurnTimer(gameId: string) {
   turnTimers.delete(gameId);
 }
 
+// ---- AFK detection -------------------------------------------------------
+// A player who is connected but never rolls/moves: after this long since their
+// last *manual* action, they forfeit a paid multi-human game so it can't hang.
+const AFK_LIMIT_MS = Math.max(
+  20_000,
+  Number(process.env.AFK_LIMIT_MS) || 120_000
+);
+const lastActionAt = new Map<string, Map<string, number>>();
+
+function noteAction(gameId: string, userId: string) {
+  let m = lastActionAt.get(gameId);
+  if (!m) {
+    m = new Map();
+    lastActionAt.set(gameId, m);
+  }
+  m.set(userId, Date.now());
+}
+
+/** Seed the clock for any human who doesn't have one yet (e.g. on join). */
+function seedActionClock(gameId: string, userIds: string[]) {
+  let m = lastActionAt.get(gameId);
+  if (!m) {
+    m = new Map();
+    lastActionAt.set(gameId, m);
+  }
+  const now = Date.now();
+  for (const u of userIds) if (!m.has(u)) m.set(u, now);
+}
+
+function isAfk(gameId: string, userId: string): boolean {
+  const t = lastActionAt.get(gameId)?.get(userId);
+  return t !== undefined && Date.now() - t > AFK_LIMIT_MS;
+}
+
+function clearActionClock(gameId: string) {
+  lastActionAt.delete(gameId);
+}
+
+/**
+ * If a human has been idle past AFK_LIMIT_MS in a paid game with ≥2 humans,
+ * end the game against them: an opponent wins the pot. Returns true if it acted.
+ */
+async function maybeForfeitAfk(
+  gameId: string,
+  state: LudoGameState,
+  io: SocketIOServer
+): Promise<boolean> {
+  const game = await prisma.game.findUnique({
+    where: { id: gameId },
+    select: { entryFee: true, status: true },
+  });
+  if (!game || game.status !== "ACTIVE") return false;
+  if (parseFloat(game.entryFee.toString()) <= 0) return false;
+
+  const humans = state.players.filter((p) => !AIPlayer.isAIPlayer(p.userId));
+  if (humans.length < 2) return false;
+
+  const afk = humans.filter((p) => isAfk(gameId, p.userId));
+  if (afk.length === 0) return false;
+
+  const active = humans.filter((p) => !isAfk(gameId, p.userId));
+  if (active.length === 0) {
+    // Everyone is idle → treat as fully abandoned: cancel + refund.
+    await refundGameEntryFees(gameId, "All players idle").catch(() => {});
+    clearTurnTimer(gameId);
+    clearActionClock(gameId);
+    const s = getGameState(gameId);
+    if (s) {
+      s.gameStatus = "FINISHED";
+      s.turnEndsAt = null;
+    }
+    io.to(`game:${gameId}`).emit("game:finished", {
+      winnerUserId: null,
+      winnerUsername: null,
+      payout: 0,
+      totalPot: 0,
+      entryFee: parseFloat(game.entryFee.toString()),
+      cancelled: true,
+    });
+    return true;
+  }
+
+  console.log(
+    `[Game ${gameId}] AFK forfeit: ${afk.map((p) => p.userId).join(",")} idle → ${active[0].userId} wins`
+  );
+  clearActionClock(gameId);
+  await handleGameFinish(gameId, active[0].userId, io);
+  return true;
+}
+
 /** (Re)arm the auto-skip timer for a game based on its current turn deadline. */
 export function scheduleTurnTimer(
   gameId: string,
@@ -58,6 +148,10 @@ async function handleTurnTimeout(gameId: string, io: SocketIOServer) {
   }
 
   try {
+    // A connected-but-idle player who has done nothing for AFK_LIMIT_MS forfeits
+    // a paid multi-human game, so it can't be dragged out forever.
+    if (await maybeForfeitAfk(gameId, state, io)) return;
+
     if (state.gameMode === "RUSH") {
       const blocked = state.players.filter((p) => p.mustMove);
       if (blocked.length === 0) {
@@ -238,6 +332,14 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       });
 
       if (gameState && gameState.gameStatus === "ACTIVE") {
+        // Give this player a fresh AFK clock the moment they arrive.
+        noteAction(gameId, userId);
+        seedActionClock(
+          gameId,
+          gameState.players
+            .map((p) => p.userId)
+            .filter((u) => !AIPlayer.isAIPlayer(u))
+        );
         scheduleTurnTimer(gameId, io, gameState);
         setTimeout(() => void processAITurn(gameId, io), 300);
       } else if (gameState && gameState.gameStatus === "FINISHED") {
@@ -296,10 +398,14 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
               !AIPlayer.isAIPlayer(s.data?.userId as string) &&
               s.id !== socket.id
           );
-          // Debounced so a StrictMode remount / refresh doesn't cancel a lobby
-          // or forfeit a live game the player is actually still in.
           if (!someoneElseHere) clearTurnTimer(gameId);
-          maybeFinishOnForfeit(gameId, io);
+          // Explicit tap on "leave" (they confirmed the dialog) → resolve fast;
+          // an opponent still in the room wins the pot almost immediately.
+          maybeFinishOnForfeit(
+            gameId,
+            io,
+            someoneElseHere ? FORFEIT_LEAVE_GRACE_MS : FORFEIT_GRACE_MS
+          );
         }
       }
     } catch (error: any) {
@@ -410,6 +516,7 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       );
 
       const diceValue = engine.rollDice(enginePlayer.id);
+      noteAction(gameId, userId);
       await updateGameState(gameId, engine.getState());
       const state = getGameState(gameId)!;
 
@@ -585,6 +692,7 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       }
 
       const isGameFinished = engine.movePiece(enginePlayer.id, pieceId);
+      noteAction(gameId, userId);
       await updateGameState(gameId, engine.getState());
       const state = getGameState(gameId)!;
 
@@ -933,6 +1041,7 @@ async function handleGameFinish(
   io: SocketIOServer
 ) {
   clearTurnTimer(gameId);
+  clearActionClock(gameId);
 
   await settleGameWinner(gameId, winnerUserId);
 
@@ -1000,9 +1109,17 @@ export async function handleSocketDisconnect(
 // Debounce forfeit resolution so a refresh / phone backgrounding / brief
 // network drop doesn't end a game the player is still in.
 const forfeitTimers = new Map<string, NodeJS.Timeout>();
-const FORFEIT_GRACE_MS = 45_000;
+// Network drop / tab close: give them time to come back.
+const FORFEIT_GRACE_MS = 25_000;
+// Explicit "leave game" tap (they confirmed a dialog): only guard against a
+// StrictMode double-fire, then resolve.
+const FORFEIT_LEAVE_GRACE_MS = 4_000;
 
-function maybeFinishOnForfeit(gameId: string, io: SocketIOServer) {
+function maybeFinishOnForfeit(
+  gameId: string,
+  io: SocketIOServer,
+  graceMs: number = FORFEIT_GRACE_MS
+) {
   const existing = forfeitTimers.get(gameId);
   if (existing) clearTimeout(existing);
   forfeitTimers.set(
@@ -1010,14 +1127,18 @@ function maybeFinishOnForfeit(gameId: string, io: SocketIOServer) {
     setTimeout(() => {
       forfeitTimers.delete(gameId);
       void resolveForfeit(gameId, io);
-    }, FORFEIT_GRACE_MS)
+    }, graceMs)
   );
 }
 
 /**
- * When a human abandons an ACTIVE game, end it: the last remaining human wins
- * (and is settled), or if nobody is left the game is cancelled and refunded.
- * Runs after a grace period; re-checks that players are still gone.
+ * A human left / dropped from a game. After a grace period (in case they come
+ * straight back), decide the outcome:
+ *  - lobby that never started, now empty  → cancel
+ *  - multi-human paid game, someone gone, someone still here → the one still
+ *    here WINS the pot (their opponent forfeited)
+ *  - everyone gone, paid                   → cancel + refund both
+ *  - everyone gone, free/practice          → just freeze it (resume on return)
  */
 async function resolveForfeit(gameId: string, io: SocketIOServer) {
   const game = await prisma.game.findUnique({
@@ -1028,17 +1149,21 @@ async function resolveForfeit(gameId: string, io: SocketIOServer) {
 
   const humans = game.players.filter((p) => !AIPlayer.isAIPlayer(p.userId));
 
-  // Anyone actually still connected to this game's room? (Robust against
-  // refreshes / StrictMode remounts that briefly emit game:leave.)
+  // Who is actually sitting in the game room right now?
   const roomSockets = await io.in(`game:${gameId}`).fetchSockets();
   const connectedUserIds = new Set(
     roomSockets.map((s) => s.data?.userId as string | undefined).filter(Boolean)
   );
-  if (humans.some((p) => connectedUserIds.has(p.userId))) return;
+  const presentHumans = humans.filter((p) => connectedUserIds.has(p.userId));
+  const missingHumans = humans.filter((p) => !connectedUserIds.has(p.userId));
+
+  // Nobody actually left (all reconnected within the grace window) → nothing to do.
+  if (missingHumans.length === 0) return;
 
   // A lobby that never started and now has nobody in it → cancel it so it
   // doesn't linger in matchmaking or as a stale invite.
   if (game.status === "WAITING") {
+    if (presentHumans.length > 0) return; // creator is still on the waiting screen
     await prisma.game
       .update({
         where: { id: gameId },
@@ -1055,44 +1180,51 @@ async function resolveForfeit(gameId: string, io: SocketIOServer) {
     return;
   }
 
-  const activeHumans = humans.filter(
-    (p) => p.status === "ACTIVE" || p.status === "FINISHED"
-  );
-
   const isMultiHuman = humans.length >= 2;
   const isPaid = parseFloat(game.entryFee.toString()) > 0;
 
-  if (humans.length > 0 && activeHumans.length === 0) {
-    // Free / practice games: never auto-end. Leave it ACTIVE so it just
-    // resumes if the player comes back; nobody loses anything by walking away.
-    if (!isPaid) {
-      clearTurnTimer(gameId);
-      return;
-    }
-    // Paid game genuinely abandoned by everyone → cancel + refund.
-    await refundGameEntryFees(gameId, "All players left the game").catch(
-      (e) => console.error(`[Game ${gameId}] refund failed:`, e)
+  // Someone left an ongoing multi-human game and at least one opponent is still
+  // here → the opponent wins by forfeit and takes the pot.
+  if (isMultiHuman && presentHumans.length >= 1) {
+    // Pick the winner: the sole present human, or (defensive) the one who has
+    // been in the game longest.
+    const winner =
+      presentHumans.length === 1
+        ? presentHumans[0]
+        : presentHumans.reduce((a, b) =>
+            a.joinedAt <= b.joinedAt ? a : b
+          );
+    console.log(
+      `[Game ${gameId}] forfeit: ${missingHumans
+        .map((p) => p.userId)
+        .join(",")} left → ${winner.userId} wins`
     );
-    clearTurnTimer(gameId);
-    const state = getGameState(gameId);
-    if (state) {
-      state.gameStatus = "FINISHED";
-      state.turnEndsAt = null;
-    }
-    io.to(`game:${gameId}`).emit("game:finished", {
-      winnerUserId: null,
-      winnerUsername: null,
-      payout: 0,
-      totalPot: 0,
-      entryFee: parseFloat(game.entryFee.toString()),
-      cancelled: true,
-    });
+    await handleGameFinish(gameId, winner.userId, io);
     return;
   }
 
-  // In a multi-human game, if only one human is still connected they win by
-  // forfeit (their opponents abandoned the match).
-  if (isMultiHuman && activeHumans.length === 1) {
-    await handleGameFinish(gameId, activeHumans[0].userId, io);
+  // Everyone is gone.
+  if (!isPaid) {
+    // Free / practice — never auto-end; it resumes if they come back.
+    clearTurnTimer(gameId);
+    return;
   }
+  // Paid game genuinely abandoned by everyone → cancel + refund.
+  await refundGameEntryFees(gameId, "All players left the game").catch((e) =>
+    console.error(`[Game ${gameId}] refund failed:`, e)
+  );
+  clearTurnTimer(gameId);
+  const state = getGameState(gameId);
+  if (state) {
+    state.gameStatus = "FINISHED";
+    state.turnEndsAt = null;
+  }
+  io.to(`game:${gameId}`).emit("game:finished", {
+    winnerUserId: null,
+    winnerUsername: null,
+    payout: 0,
+    totalPot: 0,
+    entryFee: parseFloat(game.entryFee.toString()),
+    cancelled: true,
+  });
 }

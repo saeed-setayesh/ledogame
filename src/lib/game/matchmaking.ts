@@ -3,46 +3,48 @@ import { generateRoomId } from "@/lib/utils";
 import { AIPlayer } from "@/lib/game/ai-player";
 import { collectEntryFeesAndStartGame } from "@/lib/wallet/game-payments";
 
-/** Games older than this are never matched into (stale / abandoned lobbies). */
-const MATCH_WINDOW_MS = 5 * 60 * 1000;
+/** Lobbies older than this are treated as stale and cleaned up. */
+const MATCH_WINDOW_MS = 3 * 60 * 1000;
 
 export type MatchmakeResult =
   | { status: "matched"; gameId: string }
   | { status: "searching"; gameId: string }
   | { status: "error"; message: string };
 
-type MatchGame = {
-  id: string;
-  createdAt: Date;
-  status: string;
-  players: { userId: string; status: string }[];
-};
+const MM_SHAPE = { gameType: "SOLO", maxPlayers: 2 } as const;
 
-function isMatchmakingShape(g: {
-  gameType: string;
-  maxPlayers: number;
-  players: { userId: string }[];
-}) {
-  return (
-    g.gameType === "SOLO" &&
-    g.maxPlayers === 2 &&
-    !g.players.some((p) => AIPlayer.isAIPlayer(p.userId))
-  );
+/** Every WAITING/ACTIVE matchmaking game this user is a player in, newest first. */
+async function myGames(userId: string) {
+  return prisma.game.findMany({
+    where: {
+      ...MM_SHAPE,
+      status: { in: ["WAITING", "ACTIVE"] },
+      players: { some: { userId } },
+    },
+    orderBy: { createdAt: "desc" },
+    include: { players: { select: { userId: true } } },
+  });
+}
+
+async function cancelGame(gameId: string) {
+  await prisma.game
+    .update({
+      where: { id: gameId },
+      data: { status: "CANCELLED", finishedAt: new Date() },
+    })
+    .catch(() => {});
 }
 
 /**
- * DB-backed 2-player matchmaking. The client polls this endpoint; each call
- * either pairs the user into an opponent's open lobby (and starts the game) or
- * keeps them in their own open lobby waiting. Two users racing to create a
- * lobby converge because whoever holds the *newer* lobby joins the older one.
+ * DB-backed 2-player matchmaking. The client polls this (and also gets a socket
+ * push from the server-side pairer). Guarantees **at most one open lobby per
+ * user** and never points a user at a broken game.
  */
 export async function matchmake(
   userId: string,
   entryFee: number,
   gameMode: "CLASSIC" | "RUSH"
 ): Promise<MatchmakeResult> {
-  const cutoff = new Date(Date.now() - MATCH_WINDOW_MS);
-
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { walletBalance: true },
@@ -52,71 +54,73 @@ export async function matchmake(
     return { status: "error", message: "Insufficient balance" };
   }
 
-  // 1. Do I already have a matchmaking lobby / game in flight?
-  const mine = await prisma.game.findFirst({
-    where: {
-      creatorId: userId,
-      gameType: "SOLO",
-      maxPlayers: 2,
-      gameMode,
-      entryFee,
-      status: { in: ["WAITING", "ACTIVE"] },
-      createdAt: { gte: cutoff },
-    },
-    orderBy: { createdAt: "desc" },
-    include: { players: { select: { userId: true, status: true } } },
-  });
+  const cutoff = new Date(Date.now() - MATCH_WINDOW_MS);
+  const existing = await myGames(userId);
 
-  if (mine && mine.status === "ACTIVE") {
-    return { status: "matched", gameId: mine.id };
+  // 1. Already in a started game? Resume it (must be a real 2-player game).
+  const live = existing.find(
+    (g) => g.status === "ACTIVE" && g.players.length >= 2
+  );
+  if (live) return { status: "matched", gameId: live.id };
+
+  // 2. Tidy up: cancel every stale / duplicate / broken lobby of mine. Keep at
+  //    most one fresh WAITING lobby that still matches the requested bucket.
+  let myLobby: (typeof existing)[number] | null = null;
+  for (const g of existing) {
+    const keepable =
+      g.status === "WAITING" &&
+      g.players.length === 1 &&
+      g.gameMode === gameMode &&
+      Number(g.entryFee) === entryFee &&
+      g.createdAt >= cutoff &&
+      !myLobby;
+    if (keepable) {
+      myLobby = g;
+    } else {
+      await cancelGame(g.id);
+    }
   }
 
-  // 2. Look for an opponent's open lobby.
+  // 3. Look for an opponent's open lobby in the same bucket.
   const openLobbies = await prisma.game.findMany({
     where: {
+      ...MM_SHAPE,
       status: "WAITING",
-      gameType: "SOLO",
-      maxPlayers: 2,
       gameMode,
       entryFee,
       creatorId: { not: userId },
       createdAt: { gte: cutoff },
     },
     orderBy: { createdAt: "asc" },
-    include: { players: { select: { userId: true, status: true } } },
+    include: { players: { select: { userId: true } } },
   });
-
   const opponent = openLobbies.find(
     (g) =>
       g.players.length === 1 &&
       !AIPlayer.isAIPlayer(g.players[0].userId) &&
       g.players[0].userId !== userId
-  ) as MatchGame | undefined;
+  );
 
-  const shouldJoinOpponent =
+  // Deterministic tie-break: only the "newer" side joins, so two racing users
+  // converge on one lobby instead of swapping.
+  const iJoin =
     opponent &&
-    (!mine ||
-      opponent.createdAt.getTime() < mine.createdAt.getTime() ||
-      (opponent.createdAt.getTime() === mine.createdAt.getTime() &&
-        opponent.id < mine.id));
+    (!myLobby ||
+      opponent.createdAt.getTime() < myLobby.createdAt.getTime() ||
+      (opponent.createdAt.getTime() === myLobby.createdAt.getTime() &&
+        opponent.id < myLobby.id));
 
-  if (opponent && shouldJoinOpponent) {
+  if (opponent && iJoin) {
     const joined = await joinLobby(opponent.id, userId).catch(() => false);
     if (joined) {
-      if (mine) {
-        await prisma.gamePlayer
-          .deleteMany({ where: { gameId: mine.id, userId } })
-          .catch(() => {});
-        await prisma.game
-          .update({
-            where: { id: mine.id },
-            data: { status: "CANCELLED", finishedAt: new Date() },
-          })
-          .catch(() => {});
-      }
+      if (myLobby) await cancelGame(myLobby.id);
       try {
         await collectEntryFeesAndStartGame(opponent.id);
       } catch (e) {
+        // Roll our join back so the lobby can be reused / cleaned.
+        await prisma.gamePlayer
+          .deleteMany({ where: { gameId: opponent.id, userId } })
+          .catch(() => {});
         return {
           status: "error",
           message: e instanceof Error ? e.message : "Could not start game",
@@ -124,19 +128,17 @@ export async function matchmake(
       }
       return { status: "matched", gameId: opponent.id };
     }
+    // join failed (race) → fall through and (re)create our own lobby
   }
 
-  if (mine && mine.status === "WAITING") {
-    return { status: "searching", gameId: mine.id };
-  }
+  if (myLobby) return { status: "searching", gameId: myLobby.id };
 
-  // 3. Create a fresh lobby and wait.
+  // 4. No opponent — open a fresh lobby and wait.
   const game = await prisma.game.create({
     data: {
       roomId: generateRoomId(),
-      gameType: "SOLO",
+      ...MM_SHAPE,
       gameMode,
-      maxPlayers: 2,
       entryFee,
       creatorId: userId,
       status: "WAITING",
@@ -156,8 +158,8 @@ async function joinLobby(gameId: string, userId: string): Promise<boolean> {
       include: { players: { select: { id: true, userId: true } } },
     });
     if (!game || game.status !== "WAITING") return false;
-    if (game.players.length >= game.maxPlayers) return false;
     if (game.players.some((p) => p.userId === userId)) return true;
+    if (game.players.length >= game.maxPlayers) return false;
 
     await tx.gamePlayer.create({
       data: {
@@ -172,23 +174,76 @@ async function joinLobby(gameId: string, userId: string): Promise<boolean> {
   });
 }
 
-/** Cancel the caller's open matchmaking lobby (client pressed "stop searching"). */
+/** Cancel the caller's open matchmaking lobbies (client pressed "stop"). */
 export async function cancelMatchmaking(userId: string): Promise<void> {
   const mine = await prisma.game.findMany({
     where: {
-      creatorId: userId,
-      gameType: "SOLO",
-      maxPlayers: 2,
+      ...MM_SHAPE,
       status: "WAITING",
+      creatorId: userId,
     },
-    select: { id: true },
+    select: { id: true, players: true },
   });
   for (const g of mine) {
-    await prisma.game
-      .update({
-        where: { id: g.id },
-        data: { status: "CANCELLED", finishedAt: new Date() },
-      })
-      .catch(() => {});
+    // Only cancel lobbies that never got a 2nd player.
+    if (g.players.length <= 1) await cancelGame(g.id);
   }
+}
+
+/**
+ * Server-side safety net: pair any two waiting lobbies in the same bucket even
+ * if neither client is polling. Returns the games it started, as
+ * `{ gameId, userIds }` so the socket layer can notify both players.
+ */
+export async function pairWaitingLobbies(): Promise<
+  { gameId: string; userIds: string[] }[]
+> {
+  const cutoff = new Date(Date.now() - MATCH_WINDOW_MS);
+  const waiting = await prisma.game.findMany({
+    where: {
+      ...MM_SHAPE,
+      status: "WAITING",
+      createdAt: { gte: cutoff },
+    },
+    orderBy: { createdAt: "asc" },
+    include: { players: { select: { userId: true } } },
+  });
+
+  // Bucket by mode + fee; only single-human lobbies are matchable.
+  const buckets = new Map<string, typeof waiting>();
+  for (const g of waiting) {
+    if (g.players.length !== 1) continue;
+    if (AIPlayer.isAIPlayer(g.players[0].userId)) continue;
+    const key = `${g.gameMode}:${Number(g.entryFee)}`;
+    const arr = buckets.get(key);
+    if (arr) arr.push(g);
+    else buckets.set(key, [g]);
+  }
+
+  const started: { gameId: string; userIds: string[] }[] = [];
+  for (const lobbies of buckets.values()) {
+    for (let i = 0; i + 1 < lobbies.length; i += 2) {
+      const host = lobbies[i];
+      const guest = lobbies[i + 1];
+      const guestUser = guest.players[0].userId;
+      if (host.players[0].userId === guestUser) continue;
+
+      const joined = await joinLobby(host.id, guestUser).catch(() => false);
+      if (!joined) continue;
+      await cancelGame(guest.id);
+      try {
+        await collectEntryFeesAndStartGame(host.id);
+        started.push({
+          gameId: host.id,
+          userIds: [host.players[0].userId, guestUser],
+        });
+      } catch {
+        // Couldn't collect fees (balance) — undo the join so it can retry.
+        await prisma.gamePlayer
+          .deleteMany({ where: { gameId: host.id, userId: guestUser } })
+          .catch(() => {});
+      }
+    }
+  }
+  return started;
 }

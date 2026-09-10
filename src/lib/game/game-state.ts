@@ -12,9 +12,12 @@ const activeGames = new Map<
   { engine: LudoEngine; state: LudoGameState }
 >();
 
-/** Countdown for roll/move; server stamps on each persisted state update. */
-export const TURN_COUNTDOWN_MS = 20_000;
-export const RUSH_TURN_COUNTDOWN_MS = 15_000;
+/**
+ * Countdown for each roll and each move; the server re-stamps the deadline on
+ * every persisted state update (so rolling gives a fresh window to move).
+ */
+export const TURN_COUNTDOWN_MS = 10_000;
+export const RUSH_TURN_COUNTDOWN_MS = 10_000;
 
 /**
  * Notified whenever a game's persisted state changes, so the socket layer can

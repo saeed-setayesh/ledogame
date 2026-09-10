@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { getSocket } from "@/lib/socket/client";
 import PracticeModeModal from "./PracticeModeModal";
 import {
   Gamepad2,
@@ -34,6 +35,8 @@ export default function Lobby({ userId }: LobbyProps) {
   const [entryFees, setEntryFees] = useState([1, 2, 3, 5, 10]);
   const [searching, setSearching] = useState(false);
   const [matchError, setMatchError] = useState<string | null>(null);
+  const [searchSecs, setSearchSecs] = useState(0);
+  const navigatedRef = useRef(false);
 
   const maxPlayerChoices = useMemo(
     () => Array.from({ length: 11 }, (_, i) => i + 2),
@@ -77,7 +80,24 @@ export default function Lobby({ userId }: LobbyProps) {
   useEffect(() => {
     if (!searching) return;
     let stopped = false;
+    navigatedRef.current = false;
 
+    const go = (gameId: string) => {
+      if (stopped || navigatedRef.current) return;
+      navigatedRef.current = true;
+      stopped = true;
+      router.push(`/game/${gameId}`);
+    };
+
+    // Instant path: the server-side pairer pushes us straight into our game.
+    const socket = getSocket();
+    const onFound = ({ gameId }: { gameId: string }) => go(gameId);
+    socket.on("match:found", onFound);
+    const subscribe = () => socket.emit("match:subscribe", { userId });
+    subscribe();
+    socket.on("connect", subscribe);
+
+    // Reliable path: poll the matchmaker.
     const poll = async () => {
       try {
         const res = await fetch("/api/game/matchmake", {
@@ -92,25 +112,29 @@ export default function Lobby({ userId }: LobbyProps) {
           setSearching(false);
           return;
         }
-        if (data.status === "matched" && data.gameId) {
-          stopped = true;
-          router.push(`/game/${data.gameId}`);
-        }
+        if (data.status === "matched" && data.gameId) go(data.gameId);
       } catch {
         /* keep polling */
       }
     };
 
     void poll();
-    const id = setInterval(poll, 3000);
+    const pollId = setInterval(poll, 2000);
+    const secsId = setInterval(() => setSearchSecs((s) => s + 1), 1000);
+
     return () => {
       stopped = true;
-      clearInterval(id);
+      clearInterval(pollId);
+      clearInterval(secsId);
+      socket.off("match:found", onFound);
+      socket.off("connect", subscribe);
+      socket.emit("match:unsubscribe", { userId });
     };
-  }, [searching, entryFee, gameMode, router]);
+  }, [searching, entryFee, gameMode, router, userId]);
 
   const startQuickMatch = () => {
     setMatchError(null);
+    setSearchSecs(0);
     setSearching(true);
   };
 
@@ -200,6 +224,13 @@ export default function Lobby({ userId }: LobbyProps) {
               <div className="text-sm text-white/80">
                 Searching for an opponent… ({gameMode === "RUSH" ? "Rush" : "Classic"} · {entryFee} USDT)
               </div>
+              <div className="text-xs text-white/40">{searchSecs}s</div>
+              {searchSecs >= 30 && (
+                <div className="text-xs text-white/50 text-center max-w-[16rem]">
+                  Still looking. Nobody else is on this mode &amp; fee right now —
+                  try a different entry fee, or invite a friend.
+                </div>
+              )}
               <button
                 onClick={stopQuickMatch}
                 className="text-xs px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10"

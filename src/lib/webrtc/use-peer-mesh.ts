@@ -25,11 +25,16 @@ export interface RemotePeer {
 
 interface PeerRecord {
   pc: RTCPeerConnection;
-  isOfferer: boolean;
-  audioSender: RTCRtpSender | null;
-  videoSender: RTCRtpSender | null;
-  hasRemoteDesc: boolean;
+  initiator: boolean;
+  polite: boolean;
+  makingOffer: boolean;
+  ignoreOffer: boolean;
+  hasRemote: boolean;
+  iceRestarted: boolean;
   pendingCandidates: RTCIceCandidateInit[];
+  audioTx: RTCRtpTransceiver | null;
+  videoTx: RTCRtpTransceiver | null;
+  remoteStream: MediaStream;
 }
 
 function trackOfKind(stream: MediaStream | null, kind: "audio" | "video") {
@@ -39,11 +44,12 @@ function trackOfKind(stream: MediaStream | null, kind: "audio" | "video") {
 /**
  * Full-mesh WebRTC for a small game room (2–4 humans).
  *
- * To keep it simple and glare-free: for each pair, the peer with the smaller
- * userId is the sole offerer and creates two sendrecv transceivers up front.
- * The other side answers. After that, mic/camera are toggled purely with
- * `replaceTrack` — no renegotiation ever. Signaling is relayed by the socket
- * server (webrtc-handler.ts).
+ * For each pair the peer with the LOWER userId is the sole initiator: it adds
+ * the audio+video transceivers and sends the first offer, so the opening
+ * handshake is glare-free and produces a clean two-line SDP. After that either
+ * side may toggle mic/camera — `replaceTrack` needs no renegotiation, and a
+ * direction change (recvonly⇄sendrecv) renegotiates via perfect-negotiation.
+ * Signaling is relayed by the socket server (webrtc-handler.ts).
  */
 export function usePeerMesh(
   gameId: string,
@@ -63,29 +69,27 @@ export function usePeerMesh(
     getSocket().emit("webrtc:signal", { toUserId, data });
   }, []);
 
-  const updateRemote = useCallback(
-    (userId: string, patch: Partial<RemotePeer>) => {
-      setRemotePeers((prev) => {
-        const next = new Map(prev);
-        const existing = next.get(userId);
-        const stream = patch.stream || existing?.stream || new MediaStream();
-        next.set(userId, {
-          userId,
-          stream,
-          connState: patch.connState ?? existing?.connState ?? "new",
-          hasAudio: patch.hasAudio ?? existing?.hasAudio ?? false,
-          hasVideo: patch.hasVideo ?? existing?.hasVideo ?? false,
-        });
-        return next;
+  const publish = useCallback((userId: string, rec: PeerRecord) => {
+    const isLive = (t: MediaStreamTrack) => t.readyState === "live" && !t.muted;
+    setRemotePeers((prev) => {
+      const next = new Map(prev);
+      const map: Record<string, PeerConnState> = {
+        new: "new",
+        connecting: "connecting",
+        connected: "connected",
+        disconnected: "disconnected",
+        failed: "failed",
+        closed: "disconnected",
+      };
+      next.set(userId, {
+        userId,
+        stream: rec.remoteStream,
+        connState: map[rec.pc.connectionState] ?? "new",
+        hasAudio: rec.remoteStream.getAudioTracks().some(isLive),
+        hasVideo: rec.remoteStream.getVideoTracks().some(isLive),
       });
-    },
-    []
-  );
-
-  const syncLocalTracks = useCallback((rec: PeerRecord) => {
-    const s = localStreamRef.current;
-    if (rec.audioSender) void rec.audioSender.replaceTrack(trackOfKind(s, "audio"));
-    if (rec.videoSender) void rec.videoSender.replaceTrack(trackOfKind(s, "video"));
+      return next;
+    });
   }, []);
 
   const dropPeer = useCallback((userId: string) => {
@@ -110,28 +114,70 @@ export function usePeerMesh(
     });
   }, []);
 
+  const bindTransceivers = useCallback((rec: PeerRecord) => {
+    for (const t of rec.pc.getTransceivers()) {
+      const kind = t.receiver.track?.kind ?? t.sender.track?.kind;
+      if (kind === "audio" && !rec.audioTx) rec.audioTx = t;
+      if (kind === "video" && !rec.videoTx) rec.videoTx = t;
+    }
+    const txs = rec.pc.getTransceivers();
+    if (!rec.audioTx && txs[0]) rec.audioTx = txs[0];
+    if (!rec.videoTx && txs[1]) rec.videoTx = txs[1];
+  }, []);
+
+  /** Match the transceivers to whatever local mic/camera we currently have. */
+  const syncLocalTracks = useCallback(
+    (rec: PeerRecord) => {
+      const s = localStreamRef.current;
+      for (const kind of ["audio", "video"] as const) {
+        const tx = kind === "audio" ? rec.audioTx : rec.videoTx;
+        if (!tx) continue;
+        const track = trackOfKind(s, kind);
+        void tx.sender.replaceTrack(track);
+        const want: RTCRtpTransceiverDirection = track ? "sendrecv" : "recvonly";
+        if (tx.direction !== want && tx.direction !== "stopped") {
+          try {
+            tx.direction = want; // may trigger onnegotiationneeded
+          } catch {
+            /* noop */
+          }
+        }
+      }
+    },
+    []
+  );
+
   const ensurePeer = useCallback(
     (peerUserId: string): PeerRecord => {
       const existing = peersRef.current.get(peerUserId);
       if (existing) return existing;
 
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-      const isOfferer = myUserId < peerUserId;
+      const initiator = myUserId < peerUserId;
       const rec: PeerRecord = {
         pc,
-        isOfferer,
-        audioSender: null,
-        videoSender: null,
-        hasRemoteDesc: false,
+        initiator,
+        polite: !initiator, // the answerer yields on a collision
+        makingOffer: false,
+        ignoreOffer: false,
+        hasRemote: false,
+        iceRestarted: false,
         pendingCandidates: [],
+        audioTx: null,
+        videoTx: null,
+        remoteStream: new MediaStream(),
       };
       peersRef.current.set(peerUserId, rec);
 
-      if (isOfferer) {
-        const at = pc.addTransceiver("audio", { direction: "sendrecv" });
-        const vt = pc.addTransceiver("video", { direction: "sendrecv" });
-        rec.audioSender = at.sender;
-        rec.videoSender = vt.sender;
+      if (initiator) {
+        const haveA = !!trackOfKind(localStreamRef.current, "audio");
+        const haveV = !!trackOfKind(localStreamRef.current, "video");
+        rec.audioTx = pc.addTransceiver("audio", {
+          direction: haveA ? "sendrecv" : "recvonly",
+        });
+        rec.videoTx = pc.addTransceiver("video", {
+          direction: haveV ? "sendrecv" : "recvonly",
+        });
         syncLocalTracks(rec);
       }
 
@@ -140,34 +186,35 @@ export function usePeerMesh(
       };
 
       pc.ontrack = (e) => {
-        const stream = e.streams[0] ?? new MediaStream([e.track]);
-        const isLive = (t: MediaStreamTrack) =>
-          t.readyState === "live" && !t.muted;
-        const refresh = () =>
-          updateRemote(peerUserId, {
-            stream,
-            hasAudio: stream.getAudioTracks().some(isLive),
-            hasVideo: stream.getVideoTracks().some(isLive),
-          });
-        refresh();
-        stream.onaddtrack = refresh;
-        stream.onremovetrack = refresh;
+        if (!rec.remoteStream.getTracks().includes(e.track)) {
+          rec.remoteStream.addTrack(e.track);
+        }
+        const refresh = () => publish(peerUserId, rec);
+        e.track.onended = () => {
+          try {
+            rec.remoteStream.removeTrack(e.track);
+          } catch {
+            /* noop */
+          }
+          refresh();
+        };
         e.track.onmute = refresh;
         e.track.onunmute = refresh;
-        e.track.onended = refresh;
+        refresh();
       };
 
       pc.onconnectionstatechange = () => {
-        const map: Record<string, PeerConnState> = {
-          new: "new",
-          connecting: "connecting",
-          connected: "connected",
-          disconnected: "disconnected",
-          failed: "failed",
-          closed: "disconnected",
-        };
-        updateRemote(peerUserId, { connState: map[pc.connectionState] ?? "new" });
-        if (pc.connectionState === "failed") {
+        publish(peerUserId, rec);
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        // One ICE restart attempt (initiator only), if the path drops.
+        if (
+          pc.iceConnectionState === "failed" &&
+          rec.initiator &&
+          !rec.iceRestarted
+        ) {
+          rec.iceRestarted = true;
           try {
             pc.restartIce();
           } catch {
@@ -177,19 +224,33 @@ export function usePeerMesh(
       };
 
       pc.onnegotiationneeded = async () => {
-        if (!rec.isOfferer) return;
+        // Standard perfect-negotiation guard: only offer from a stable state.
+        if (pc.signalingState !== "stable") return;
         try {
+          rec.makingOffer = true;
           await pc.setLocalDescription();
           sendSignal(peerUserId, { description: pc.localDescription });
         } catch (err) {
           console.error("[rtc] negotiation error", err);
+        } finally {
+          rec.makingOffer = false;
         }
       };
 
       return rec;
     },
-    [myUserId, sendSignal, updateRemote, syncLocalTracks]
+    [myUserId, sendSignal, publish, syncLocalTracks]
   );
+
+  const flushCandidates = useCallback(async (rec: PeerRecord) => {
+    for (const c of rec.pendingCandidates.splice(0)) {
+      try {
+        await rec.pc.addIceCandidate(c);
+      } catch {
+        /* noop */
+      }
+    }
+  }, []);
 
   const handleSignal = useCallback(
     async ({
@@ -209,42 +270,40 @@ export function usePeerMesh(
 
       try {
         if (data.description) {
-          await pc.setRemoteDescription(data.description);
-          rec.hasRemoteDesc = true;
-          for (const c of rec.pendingCandidates.splice(0)) {
-            try {
-              await pc.addIceCandidate(c);
-            } catch {
-              /* noop */
-            }
+          // Drop stale answers (e.g. after a duplicate offer): we only accept
+          // an answer while we're actually waiting for one.
+          if (
+            data.description.type === "answer" &&
+            pc.signalingState !== "have-local-offer"
+          ) {
+            return;
           }
+
+          const collision =
+            data.description.type === "offer" &&
+            (rec.makingOffer || pc.signalingState !== "stable");
+          rec.ignoreOffer = !rec.polite && collision;
+          if (rec.ignoreOffer) return;
+
+          await pc.setRemoteDescription(data.description);
+          rec.hasRemote = true;
+          bindTransceivers(rec);
+          await flushCandidates(rec);
+
           if (data.description.type === "offer") {
-            // We're the answerer — keep both directions open and bind senders.
-            for (const t of pc.getTransceivers()) {
-              try {
-                t.direction = "sendrecv";
-              } catch {
-                /* transceiver may be stopped */
-              }
-              const kind = t.receiver.track?.kind;
-              if (kind === "audio") rec.audioSender = t.sender;
-              if (kind === "video") rec.videoSender = t.sender;
-            }
-            const txs = pc.getTransceivers();
-            if (!rec.audioSender && txs[0]) rec.audioSender = txs[0].sender;
-            if (!rec.videoSender && txs[1]) rec.videoSender = txs[1].sender;
+            // answerer: keep our own media flowing on the negotiated m-lines
             syncLocalTracks(rec);
             await pc.setLocalDescription();
             sendSignal(fromUserId, { description: pc.localDescription });
           }
         } else if (data.candidate) {
-          if (!rec.hasRemoteDesc) {
+          if (!rec.hasRemote) {
             rec.pendingCandidates.push(data.candidate);
           } else {
             try {
               await pc.addIceCandidate(data.candidate);
-            } catch {
-              /* noop */
+            } catch (err) {
+              if (!rec.ignoreOffer) console.warn("[rtc] addIceCandidate", err);
             }
           }
         }
@@ -252,15 +311,15 @@ export function usePeerMesh(
         console.error("[rtc] signal handling error", err);
       }
     },
-    [ensurePeer, myUserId, sendSignal, syncLocalTracks]
+    [ensurePeer, myUserId, sendSignal, bindTransceivers, flushCandidates, syncLocalTracks]
   );
 
-  // Push local mic/cam track changes to every peer (no renegotiation).
+  // Local mic/cam changed → reconcile every peer.
   useEffect(() => {
     for (const [, rec] of peersRef.current) syncLocalTracks(rec);
   }, [localStream, syncLocalTracks]);
 
-  // Dev-only debug handle (window.__peerMesh) for manual QA.
+  // Dev-only debug handle.
   useEffect(() => {
     if (typeof window === "undefined" || process.env.NODE_ENV === "production") {
       return;
@@ -269,17 +328,18 @@ export function usePeerMesh(
       stats: () =>
         [...peersRef.current.entries()].map(([id, r]) => ({
           id,
-          offerer: r.isOfferer,
+          initiator: r.initiator,
           connectionState: r.pc.connectionState,
           iceConnectionState: r.pc.iceConnectionState,
+          signalingState: r.pc.signalingState,
           transceivers: r.pc
             .getTransceivers()
             .map(
               (t) =>
-                `${t.receiver.track?.kind ?? t.sender.track?.kind ?? "?"}:${
-                  t.currentDirection ?? t.direction
-                }`
+                `${t.receiver.track?.kind ?? t.sender.track?.kind ?? "?"}:` +
+                `${t.currentDirection ?? t.direction}`
             ),
+          remoteTracks: r.remoteStream.getTracks().map((t) => t.kind),
         })),
       setLocalTracks: (stream: MediaStream | null) => {
         localStreamRef.current = stream;

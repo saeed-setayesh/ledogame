@@ -1,5 +1,9 @@
 /* Quick sanity checks for the Ludo engine rule changes. Run: npx tsx scripts/test-engine.ts */
 import { LudoEngine } from "../src/lib/game/ludo-engine";
+import {
+  getCellForPathPosition,
+  FINISH_PROGRESS,
+} from "../src/lib/game/ludo-track-cells";
 
 let pass = 0;
 let fail = 0;
@@ -193,6 +197,24 @@ function withDiceReturn<T>(value: number, fn: () => T): T {
     return fn();
   } finally {
     Math.random = orig;
+  }
+}
+
+console.log("Home-lane approach is continuous (no skip-then-back-track)");
+{
+  const adjacent = (
+    a: readonly [number, number],
+    b: readonly [number, number]
+  ) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) === 1;
+  for (const c of ["RED", "BLUE", "GREEN", "YELLOW"] as const) {
+    let jumps = 0;
+    // Last loop cell (50) through the whole 5-cell home lane (51..55).
+    for (let p = 51; p < FINISH_PROGRESS; p++) {
+      const prev = getCellForPathPosition(c, p - 1)!;
+      const cell = getCellForPathPosition(c, p);
+      if (!cell || !adjacent(prev, cell)) jumps++;
+    }
+    check(`${c}: loop→home-lane steps 50→55 are all one cell`, jumps === 0);
   }
 }
 
