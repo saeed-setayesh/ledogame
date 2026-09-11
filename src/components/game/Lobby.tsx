@@ -39,6 +39,7 @@ export default function Lobby({ userId }: LobbyProps) {
   const [searchInfo, setSearchInfo] = useState<{ players: number; needed: number } | null>(null);
   const [qmPlayers, setQmPlayers] = useState<2 | 3 | 4>(2);
   const navigatedRef = useRef(false);
+  const quickMatchCardRef = useRef<HTMLDivElement>(null);
 
   const maxPlayerChoices = useMemo(
     () => Array.from({ length: 11 }, (_, i) => i + 2),
@@ -153,7 +154,22 @@ export default function Lobby({ userId }: LobbyProps) {
     }).catch(() => {});
   };
 
+  // A plain 2–4 player Solo game with no AI is exactly what Quick Match
+  // matches — route it there instead of opening a private, unjoinable room.
+  const isMatchmakableShape =
+    gameType === "SOLO" && aiPlayers === 0 && maxPlayers <= 4;
+
   const handleCreateGame = async () => {
+    if (isMatchmakableShape) {
+      setQmPlayers(maxPlayers === 3 ? 3 : maxPlayers === 4 ? 4 : 2);
+      startQuickMatch();
+      quickMatchCardRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      return;
+    }
+
     setLoading(true);
     try {
       const response = await fetch("/api/game/create", {
@@ -205,7 +221,7 @@ export default function Lobby({ userId }: LobbyProps) {
         </div>
 
         {/* Quick Match — random 2–4 player game, fully configured here */}
-        <div className="game-card">
+        <div className="game-card" ref={quickMatchCardRef}>
           <div className="flex items-center gap-2 mb-3">
             <Users className="w-5 h-5 text-primary" />
             <label className="block text-lg font-semibold">Quick Match</label>
@@ -583,9 +599,14 @@ export default function Lobby({ userId }: LobbyProps) {
                   ✓ Game will start automatically with {aiPlayers + 1} total
                   player{aiPlayers + 1 > 1 ? "s" : ""} ({aiPlayers} AI)
                 </p>
+              ) : isMatchmakableShape ? (
+                <p className="text-xs text-foreground/60 mt-2">
+                  ✓ This matches you with real players — same as Quick Match.
+                </p>
               ) : (
                 <p className="text-xs text-foreground/60 mt-2">
-                  Game will start when {maxPlayers} players join
+                  Opens a private room for up to {maxPlayers} players — share the
+                  link with friends to fill it.
                 </p>
               )}
             </div>
@@ -606,7 +627,9 @@ export default function Lobby({ userId }: LobbyProps) {
               ) : (
                 <>
                   <Play className="w-6 h-6" />
-                  <span className="text-lg">Create Game</span>
+                  <span className="text-lg">
+                    {isMatchmakableShape ? "Find Match" : "Create Game"}
+                  </span>
                   <Trophy className="w-6 h-6" />
                 </>
               )}

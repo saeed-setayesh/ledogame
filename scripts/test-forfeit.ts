@@ -104,9 +104,14 @@ async function main() {
   const bFinal = await bal(b.id);
   console.log(`  status=${g.status} winner=${g.winnerId === b.id ? "B" : g.winnerId} A=${aFinal} B=${bFinal}`);
 
+  const rate = (parseFloat(process.env.COMMISSION_RATE || "15") || 15) / 100;
+  const expected = 90 + 20 * (1 - rate);
   check("game FINISHED", g.status === "FINISHED");
   check("B (who stayed) is the winner", g.winnerId === b.id);
-  check("B got the pot minus commission (90 + 16.6 = 106.6)", Math.abs(bFinal - 106.6) < 0.01);
+  check(
+    `B got the pot minus commission (${expected.toFixed(2)})`,
+    Math.abs(bFinal - expected) < 0.01
+  );
   check("A (who left) stays down 10", aFinal === 90);
   check("B received a game:finished event", !!bFinished && bFinished.winnerUserId === b.id);
 

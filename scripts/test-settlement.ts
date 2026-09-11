@@ -47,9 +47,14 @@ async function main() {
   const bFinal = await bal(b.id);
   const g = await prisma.game.findUniqueOrThrow({ where: { id: game.id } });
   console.log(`after settle: A=${aFinal} B=${bFinal} status=${g.status} commission=${g.commissionAmount}`);
-  // pot 20, commission 17% = 3.4, payout 16.6 => A: 90 + 16.6 = 106.6
+  // pot 20, commission = COMMISSION_RATE% (default 15) => A: 90 + payout
+  const rate = (parseFloat(process.env.COMMISSION_RATE || "15") || 15) / 100;
+  const expectedPayout = 20 * (1 - rate);
   assert(g.status === "FINISHED", "game FINISHED");
-  assert(Math.abs(aFinal - 106.6) < 0.001, "winner A paid 16.6 (pot - 17% commission)");
+  assert(
+    Math.abs(aFinal - (90 + expectedPayout)) < 0.001,
+    `winner A paid ${expectedPayout.toFixed(2)} (pot - ${rate * 100}% commission)`
+  );
   assert(bFinal === 90, "loser B stays debited 10 (no refund)");
 
   await prisma.gameMove.deleteMany({ where: { gameId: game.id } });

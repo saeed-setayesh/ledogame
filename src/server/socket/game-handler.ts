@@ -235,12 +235,12 @@ export function gameHandlers(socket: Socket, io: SocketIOServer) {
       socket.data.userId = userId;
       socket.data.gameId = gameId;
 
-      // A (re)join cancels any pending forfeit for this game.
-      const pendingForfeit = forfeitTimers.get(gameId);
-      if (pendingForfeit) {
-        clearTimeout(pendingForfeit.timer);
-        forfeitTimers.delete(gameId);
-      }
+      // NOTE: we deliberately do NOT cancel a pending forfeit timer here just
+      // because *someone* joined — resolveForfeit() re-checks who's actually
+      // still connected at fire time, so a reconnect from the player who is
+      // NOT the one who left can't wrongly swallow a real forfeit (this used
+      // to cancel the timer unconditionally, which could silently strand a
+      // still-ACTIVE game with no one ever declared the winner).
 
       // Load game state if not in memory.
       let gameState = getGameState(gameId);

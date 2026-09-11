@@ -187,6 +187,8 @@ export default function VideoCall({
 
   const remoteList = [...remotePeers.values()];
   const remoteVideos = remoteList.filter((p) => p.hasVideo);
+  // Audio-only peers (video tiles carry their own audio track).
+  const remoteAudioOnly = remoteList.filter((p) => p.hasAudio && !p.hasVideo);
   const connectedCount = remoteList.filter(
     (p) => p.connState === "connected"
   ).length;
@@ -256,8 +258,13 @@ export default function VideoCall({
         )}
       </button>
 
-      {/* Hidden audio sinks so remote voices are actually heard. */}
-      {remoteList.map((p) => (
+      {/* Hidden audio sinks so remote voices are actually heard. Mounted only
+          once a peer actually has a live audio track — a stable-keyed
+          component that *internally* toggles between null/<audio> would only
+          ever bind srcObject on its very first render (peer.stream is the
+          same MediaStream object for the peer's whole lifetime, so a
+          useEffect keyed on it never fires again after that). */}
+      {remoteAudioOnly.map((p) => (
         <RemoteAudio key={`a-${p.userId}`} peer={p} muted={!soundEnabled} />
       ))}
 
@@ -309,13 +316,13 @@ export default function VideoCall({
 
 function RemoteAudio({ peer, muted }: { peer: RemotePeer; muted: boolean }) {
   const ref = useRef<HTMLAudioElement>(null);
+  // The parent only mounts this once peer.hasAudio is true, so the element
+  // exists on the ref's very first commit and this reliably binds.
   useEffect(() => {
     if (ref.current && ref.current.srcObject !== peer.stream) {
       ref.current.srcObject = peer.stream;
     }
   }, [peer.stream]);
-  // Only mount when there is (or was) audio; video tiles carry their own audio.
-  if (!peer.hasAudio || peer.hasVideo) return null;
   return <audio ref={ref} autoPlay playsInline muted={muted} />;
 }
 

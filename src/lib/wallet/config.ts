@@ -1,8 +1,8 @@
 /** Platform wallet / payment configuration (env-driven). */
 
 export function getCommissionRatePercent(): number {
-  const raw = parseFloat(process.env.COMMISSION_RATE || "17");
-  if (Number.isNaN(raw)) return 17;
+  const raw = parseFloat(process.env.COMMISSION_RATE || "15");
+  if (Number.isNaN(raw)) return 15;
   return Math.min(100, Math.max(0, raw));
 }
 

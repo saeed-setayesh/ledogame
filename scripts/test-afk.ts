@@ -100,7 +100,12 @@ async function main() {
   console.log(`  status=${g.status} winner=${g.winnerId === b.id ? "B" : g.winnerId} A=${aFinal} B=${bFinal}`);
   check("game FINISHED (AFK forced it to end)", g.status === "FINISHED");
   check("B (active) is the winner", g.winnerId === b.id);
-  check("B got pot minus commission (90 + 16.6)", Math.abs(bFinal - 106.6) < 0.01);
+  const commissionRate = (parseFloat(process.env.COMMISSION_RATE || "15") || 15) / 100;
+  const expectedB = 90 + 20 * (1 - commissionRate);
+  check(
+    `B got pot minus commission (${expectedB.toFixed(2)})`,
+    Math.abs(bFinal - expectedB) < 0.01
+  );
   check("A (idle) stays down 10", aFinal === 90);
   check("game:finished emitted for B", !!finish && finish.winnerUserId === b.id);
 
