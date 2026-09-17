@@ -19,12 +19,57 @@ import {
 import UserManagement from "./UserManagement";
 import GameManagement from "./GameManagement";
 
+interface PeriodStats {
+  newUsers: number;
+  games: number;
+  deposits: number;
+  withdrawals: number;
+  commission: number;
+}
+
 interface Stats {
   totalGames: number;
   totalDeposits: number;
   totalWithdrawals: number;
   totalCommission: number;
   activeUsers: number;
+  overall: {
+    totalUsers: number;
+    totalGames: number;
+    totalDeposits: number;
+    totalWithdrawals: number;
+    totalCommission: number;
+  };
+  thisMonth: PeriodStats;
+  lastMonth: PeriodStats;
+  growth: {
+    newUsers: number | null;
+    games: number | null;
+    deposits: number | null;
+    withdrawals: number | null;
+    commission: number | null;
+  };
+  monthlyTrend: { month: string; newUsers: number }[];
+}
+
+function GrowthBadge({ value }: { value: number | null }) {
+  if (value === null) return null;
+  const up = value >= 0;
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 text-xs font-semibold ${
+        up ? "text-success" : "text-danger"
+      }`}
+    >
+      {up ? (
+        <TrendingUp className="w-3 h-3" />
+      ) : (
+        <TrendingDown className="w-3 h-3" />
+      )}
+      {up ? "+" : ""}
+      {value.toFixed(1)}%
+    </span>
+  );
 }
 
 interface GameSettings {
@@ -238,6 +283,155 @@ export default function AdminDashboard() {
                 </div>
                 <div className="text-3xl font-bold">{stats.activeUsers}</div>
                 <div className="text-xs text-foreground/50 mt-1">Today</div>
+              </div>
+            </div>
+
+            {/* Overall (all-time) stats */}
+            <div>
+              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-primary" />
+                Overall
+              </h2>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-foreground/60">Total Users</div>
+                  <div className="text-2xl font-bold">
+                    {stats.overall.totalUsers}
+                  </div>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-foreground/60">Total Games</div>
+                  <div className="text-2xl font-bold">
+                    {stats.overall.totalGames}
+                  </div>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-foreground/60">Deposits</div>
+                  <div className="text-2xl font-bold text-success">
+                    {formatUSDT(stats.overall.totalDeposits)}
+                  </div>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-foreground/60">Withdrawals</div>
+                  <div className="text-2xl font-bold text-danger">
+                    {formatUSDT(stats.overall.totalWithdrawals)}
+                  </div>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="text-xs text-foreground/60">Commission</div>
+                  <div className="text-2xl font-bold text-primary">
+                    {formatUSDT(stats.overall.totalCommission)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* This month vs last month */}
+            <div>
+              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-primary" />
+                This Month vs Last Month
+              </h2>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-xs text-foreground/60">New Users</div>
+                    <GrowthBadge value={stats.growth.newUsers} />
+                  </div>
+                  <div className="text-2xl font-bold">
+                    {stats.thisMonth.newUsers}
+                  </div>
+                  <div className="text-xs text-foreground/50">
+                    was {stats.lastMonth.newUsers} last month
+                  </div>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-xs text-foreground/60">Games</div>
+                    <GrowthBadge value={stats.growth.games} />
+                  </div>
+                  <div className="text-2xl font-bold">
+                    {stats.thisMonth.games}
+                  </div>
+                  <div className="text-xs text-foreground/50">
+                    was {stats.lastMonth.games} last month
+                  </div>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-xs text-foreground/60">Deposits</div>
+                    <GrowthBadge value={stats.growth.deposits} />
+                  </div>
+                  <div className="text-2xl font-bold text-success">
+                    {formatUSDT(stats.thisMonth.deposits)}
+                  </div>
+                  <div className="text-xs text-foreground/50">
+                    was {formatUSDT(stats.lastMonth.deposits)} last month
+                  </div>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-xs text-foreground/60">
+                      Withdrawals
+                    </div>
+                    <GrowthBadge value={stats.growth.withdrawals} />
+                  </div>
+                  <div className="text-2xl font-bold text-danger">
+                    {formatUSDT(stats.thisMonth.withdrawals)}
+                  </div>
+                  <div className="text-xs text-foreground/50">
+                    was {formatUSDT(stats.lastMonth.withdrawals)} last month
+                  </div>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-xs text-foreground/60">Commission</div>
+                    <GrowthBadge value={stats.growth.commission} />
+                  </div>
+                  <div className="text-2xl font-bold text-primary">
+                    {formatUSDT(stats.thisMonth.commission)}
+                  </div>
+                  <div className="text-xs text-foreground/50">
+                    was {formatUSDT(stats.lastMonth.commission)} last month
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* User acquisition trend */}
+            <div>
+              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-primary" />
+                User Acquisition (last 6 months)
+              </h2>
+              <div className="bg-card border border-border rounded-xl p-4 md:p-6">
+                <div className="flex items-end gap-2 md:gap-4 h-40">
+                  {(() => {
+                    const max = Math.max(
+                      1,
+                      ...stats.monthlyTrend.map((m) => m.newUsers)
+                    );
+                    return stats.monthlyTrend.map((m) => (
+                      <div
+                        key={m.month}
+                        className="flex-1 flex flex-col items-center justify-end gap-1 h-full"
+                      >
+                        <div className="text-xs font-semibold">
+                          {m.newUsers}
+                        </div>
+                        <div
+                          className="w-full max-w-10 rounded-t-md bg-gradient-to-t from-primary to-secondary"
+                          style={{
+                            height: `${Math.max(4, (m.newUsers / max) * 100)}%`,
+                          }}
+                        />
+                        <div className="text-[10px] text-foreground/60">
+                          {m.month}
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
               </div>
             </div>
           </div>
